@@ -1,0 +1,142 @@
+# AgentForge — Local development stack.
+#
+# Five services:
+#   mysql          MariaDB 11.4 — backs OpenEMR
+#   openemr        the EHR (PHP+Apache, flex-edge image, source bind-mounted)
+#   phpmyadmin     for poking at the schema during the audit
+#   agent-service  Python FastAPI agent (see ./agent-service/)
+#   redis          context-bundle cache + per-turn token map
+#
+# Usage:
+#   docker compose up -d              # boot the stack
+#   docker compose logs -f openemr    # watch first-boot install (~3-5 min)
+#   docker compose logs -f agent-service
+#   docker compose down               # stop (data persists)
+#   docker compose down -v            # nuke (drops DB + sites + redis)
+#
+# After boot:
+#   OpenEMR:        http://localhost:8080  (admin / pass)
+#   phpMyAdmin:     http://localhost:8081  (root / root)
+#   Agent service:  http://localhost:8000/healthz
+#
+# Required env (create .env at the repo root):
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   AGENT_SHARED_SECRET=<output of: python -c "import secrets;print(secrets.token_hex(32))">
+#
+# After first boot:
+#   1. Log into OpenEMR, install the Clinical Co-Pilot module:
+#      Modules → Manage Modules → Unregistered → Register → Install → Enable
+#   2. Admin → Globals → Clinical Co-Pilot → set
+#      copilot_agent_url=http://agent-service:8000  (already the default)
+#      copilot_agent_shared_secret=<paste your AGENT_SHARED_SECRET value>
+
+services:
+  mysql:
+    image: mariadb:11.4
+    restart: unless-stopped
+    command:
+      - mysqld
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  openemr:
+    # flex-edge tracks OpenEMR master and is built to host a mounted source tree.
+    # Pin to flex-3.22 if flex-edge is unstable.
+    image: openemr/openemr:flex-edge
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      # Mount our forked source so local edits propagate into the container.
+      - .:/openemr
+      # Persist OpenEMR's per-site data (uploads, generated keys, logs) outside
+      # the bind mount so they survive `docker compose down` without polluting git.
+      - openemr-sites:/var/www/localhost/htdocs/openemr/sites
+    environment:
+      # Triggers the flex image's auto-install + composer/npm build on first boot.
+      EASY_DEV_MODE: "yes"
+      EASY_DEV_MODE_NEW: "yes"
+      # DB wiring (must match the mysql service above).
+      MYSQL_HOST: mysql
+      MYSQL_ROOT_USER: root
+      MYSQL_ROOT_PASS: root
+      MYSQL_USER: openemr
+      MYSQL_PASS: openemr
+      MYSQL_DATABASE: openemr
+      # OpenEMR admin user created on first boot.
+      OE_USER: admin
+      OE_PASS: pass
+      # Mark the running env so OpenEMR enables dev-friendly behavior
+      # (e.g. cache-busting JS includes — see version.php:49).
+      OPENEMR__ENVIRONMENT: dev
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  phpmyadmin:
+    # Useful during the audit phase for poking at the schema directly.
+    image: phpmyadmin:5
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: root
+      PMA_PASSWORD: root
+      UPLOAD_LIMIT: 256M
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  redis:
+    # Context-bundle cache (5-min TTL) + per-turn token map.
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]  # ephemeral, OK to lose
+    volumes:
+      - redis-data:/data
+
+  agent-service:
+    # Python FastAPI agent — calls Anthropic Claude, dispatches tools,
+    # runs verification + redaction. See ./agent-service/ARCHITECTURE.md.
+    build:
+      context: ./agent-service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set in .env at repo root}
+      AGENT_SHARED_SECRET: ${AGENT_SHARED_SECRET:?set in .env; must match OpenEMR globals}
+      OPENEMR_BASE_URL: http://openemr
+      # OAuth2 client_credentials grant — created in OpenEMR Admin →
+      # System → API Clients. Set these after first install.
+      OPENEMR_OAUTH_CLIENT_ID: ${OPENEMR_OAUTH_CLIENT_ID:-}
+      OPENEMR_OAUTH_CLIENT_SECRET: ${OPENEMR_OAUTH_CLIENT_SECRET:-}
+      REDIS_URL: redis://redis:6379/0
+      # Optional — Langfuse self-hosted is a Sunday deliverable.
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-}
+    depends_on:
+      - redis
+      - openemr
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  mysql-data:
+  openemr-sites:
+  redis-data:

@@ -1,0 +1,36 @@
+# Dependencies (rebuilt by composer / npm in the container)
+/vendor/
+/node_modules/
+/public/assets/
+
+# Runtime per-tenant data — must not be committed (contains PHI)
+/sites/*/documents/
+/sites/*/edi/
+/sites/*/era/
+/sites/*/letter_templates/
+/sites/*/sqlconf.php
+
+# Local secrets / overrides
+.env
+.env.local
+.env.*.local
+docker-compose.override.yml
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Logs / caches
+*.log
+.phpunit.result.cache
+.phpunit.cache/
+.phpstan/
+coverage/
+
+# Build outputs
+/public/themes/
+/dist/
