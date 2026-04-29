@@ -39,23 +39,24 @@ FROM openemr/openemr:7.0.3
 # Production-mode flag.
 ENV OPENEMR__ENVIRONMENT=prod
 
-# Preserve the base image's entrypoint script before overwriting /openemr
-# with our forked source.
-RUN cp /openemr/openemr.sh /tmp/openemr.sh
-
-# Bring our forked source in. This becomes the input to the flex
-# entrypoint on container start.
-COPY --chown=root:root . /openemr
-
-# Restore the entrypoint script that was overwritten by the COPY.
-RUN cp /tmp/openemr.sh /openemr/openemr.sh && chmod +x /openemr/openemr.sh
-
-# Install Node.js dependencies so that the gulp SCSS build (run by the
-# flex-edge entrypoint at startup) has all required assets — including
-# napa-downloaded packages like select2-bootstrap4-theme, bootstrap-rtl,
-# jquery-ui, etc.
-WORKDIR /openemr
-RUN npm install
-
 # Apache listens here in the upstream image; Railway maps PORT → this.
 EXPOSE 80
+
+# History — earlier attempts that did not work, kept here so we don't
+# repeat them on Thursday:
+#
+#   1. `FROM openemr/openemr:flex-edge` — its ONBUILD instructions run
+#      `cp /openemr/openemr.sh /tmp/openemr.sh` BEFORE our COPY, so they
+#      fail because openemr.sh lives in the openemr-devops repo, not
+#      the application repo we forked.
+#
+#   2. `FROM openemr/openemr:7.0.3` + manual save/COPY/restore of
+#      openemr.sh — production image stores source at
+#      /var/www/localhost/htdocs/openemr/, not /openemr/, so
+#      `cp /openemr/openemr.sh /tmp/...` fails for the same reason.
+#
+# For Thursday's agent integration (which needs our fork's source on
+# the deployed app), the right path is a multi-stage build: stage 1
+# composer install + npm build against our source, stage 2 copy the
+# built artifact into a fresh php:8.2-apache with all the OpenEMR
+# extensions installed.
