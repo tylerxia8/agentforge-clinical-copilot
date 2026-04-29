@@ -39,4 +39,23 @@ FROM openemr/openemr:7.0.3
 # Production-mode flag.
 ENV OPENEMR__ENVIRONMENT=prod
 
+# Preserve the base image's entrypoint script before overwriting /openemr
+# with our forked source.
+RUN cp /openemr/openemr.sh /tmp/openemr.sh
+
+# Bring our forked source in. This becomes the input to the flex
+# entrypoint on container start.
+COPY --chown=root:root . /openemr
+
+# Restore the entrypoint script that was overwritten by the COPY.
+RUN cp /tmp/openemr.sh /openemr/openemr.sh && chmod +x /openemr/openemr.sh
+
+# Install Node.js dependencies so that the gulp SCSS build (run by the
+# flex-edge entrypoint at startup) has all required assets — including
+# napa-downloaded packages like select2-bootstrap4-theme, bootstrap-rtl,
+# jquery-ui, etc.
+WORKDIR /openemr
+RUN npm install
+
+# Apache listens here in the upstream image; Railway maps PORT → this.
 EXPOSE 80
