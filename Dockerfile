@@ -34,9 +34,16 @@ ENV EASY_DEV_MODE_NEW=yes
 # version.php:49) and any other dev-only behavior.
 ENV OPENEMR__ENVIRONMENT=prod
 
+# Preserve the base image's entrypoint script before overwriting /openemr
+# with our forked source.
+RUN cp /openemr/openemr.sh /tmp/openemr.sh
+
 # Bring our forked source in. This becomes the input to the flex
 # entrypoint on container start.
 COPY --chown=root:root . /openemr
+
+# Restore the entrypoint script that was overwritten by the COPY.
+RUN cp /tmp/openemr.sh /openemr/openemr.sh && chmod +x /openemr/openemr.sh
 
 # Install Node.js dependencies so that the gulp SCSS build (run by the
 # flex-edge entrypoint at startup) has all required assets — including
