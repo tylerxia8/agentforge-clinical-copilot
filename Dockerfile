@@ -38,5 +38,12 @@ ENV OPENEMR__ENVIRONMENT=prod
 # entrypoint on container start.
 COPY --chown=root:root . /openemr
 
+# Install Node.js dependencies so that the gulp SCSS build (run by the
+# flex-edge entrypoint at startup) has all required assets — including
+# napa-downloaded packages like select2-bootstrap4-theme, bootstrap-rtl,
+# jquery-ui, etc.
+WORKDIR /openemr
+RUN npm install
+
 # Apache listens here in the upstream image; Railway maps PORT → this.
 EXPOSE 80
