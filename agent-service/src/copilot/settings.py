@@ -18,14 +18,23 @@ class Settings(BaseSettings):
     max_verification_retries: int = 2
 
     # --- OpenEMR REST bridge ---
+    # Auth: OAuth2 Password Grant for v0/v1 (the OpenEMR client_credentials
+    # path requires private-key JWT signing with JWKS registration — out of
+    # scope for the early submission deadline). This means a service-account
+    # OpenEMR user that the agent runs as. Documented as a v2 swap target
+    # in ARCHITECTURE.md.
     openemr_base_url: str = Field(..., alias="OPENEMR_BASE_URL")
     openemr_oauth_client_id: str = Field(..., alias="OPENEMR_OAUTH_CLIENT_ID")
     openemr_oauth_client_secret: str = Field(..., alias="OPENEMR_OAUTH_CLIENT_SECRET")
+    openemr_service_username: str = Field(..., alias="OPENEMR_SERVICE_USERNAME")
+    openemr_service_password: str = Field(..., alias="OPENEMR_SERVICE_PASSWORD")
     openemr_oauth_token_path: str = "/oauth2/default/token"
+    # user/* scopes work with Password Grant; system/* would require JWT.
     openemr_oauth_scope: str = (
-        "system/Patient.read system/Encounter.read system/Observation.read "
-        "system/MedicationRequest.read system/Condition.read "
-        "system/AllergyIntolerance.read system/Immunization.read"
+        "openid offline_access api:fhir "
+        "user/Patient.read user/Encounter.read user/Observation.read "
+        "user/MedicationRequest.read user/Condition.read "
+        "user/AllergyIntolerance.read user/Immunization.read"
     )
 
     # --- Auth between PHP module and this service ---

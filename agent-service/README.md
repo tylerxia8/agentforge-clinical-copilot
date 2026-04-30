@@ -49,7 +49,7 @@ agent-service/
 | Anthropic client | Implemented (sync) |
 | Orchestrator loop | Implemented (single retry on verification fail; judge call stubbed) |
 | Tools | `get_active_medications` fully sketched; others stubbed in `tools/__init__.py` |
-| OpenEMR REST bridge | Sketched — OAuth2 client_credentials grant + one endpoint shown |
+| OpenEMR FHIR bridge | Live — OAuth2 Password Grant; FHIR /MedicationRequest implemented |
 | Context cache (Redis) | Sketched |
 | Langfuse traces | TODO — slot reserved in orchestrator |
 
@@ -60,8 +60,10 @@ cd agent-service
 pip install -e .
 export ANTHROPIC_API_KEY=sk-ant-...
 export OPENEMR_BASE_URL=http://localhost:8080
-export OPENEMR_OAUTH_CLIENT_ID=...
+export OPENEMR_OAUTH_CLIENT_ID=...           # from /oauth2/default/registration
 export OPENEMR_OAUTH_CLIENT_SECRET=...
+export OPENEMR_SERVICE_USERNAME=copilot-svc  # OpenEMR user the agent runs as
+export OPENEMR_SERVICE_PASSWORD=...
 export AGENT_SHARED_SECRET=$(python -c "import secrets;print(secrets.token_hex(32))")
 export REDIS_URL=redis://localhost:6379/0
 uvicorn copilot.main:app --reload --port 8000

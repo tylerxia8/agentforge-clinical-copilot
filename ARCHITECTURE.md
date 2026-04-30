@@ -730,6 +730,17 @@ strategy at 10K is the architectural inflection point, not the
 - **Per-clinic prompt customization.** Different clinics will want
   different defaults (e.g., what counts as "overdue screening").
   Out of scope for v1 — single canonical prompt.
+- **OAuth grant: Password Grant for v0/v1, client_credentials JWT
+  for production.** OpenEMR's `client_credentials` grant requires
+  asymmetric client authentication (RS384-signed JWT assertions, JWKS
+  registration). For the early-submission deadline we ship with
+  OAuth Password Grant against a dedicated service-account user —
+  the same wire-format (Bearer tokens), simpler auth dance, lets us
+  un-stub the bridge in hours instead of days. Production swap is
+  documented as a known v2 task: generate an RSA keypair, host JWKS,
+  re-register the client with `token_endpoint_auth_method=
+  private_key_jwt`. The bridge code's token-fetch helper is the only
+  piece that changes.
 
 These are not blockers — they are the conversation we want to have
 *after* we have a verified, fast, defensible v1 in front of Dr. M.

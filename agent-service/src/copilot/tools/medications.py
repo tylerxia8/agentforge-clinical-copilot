@@ -1,15 +1,12 @@
-"""GetActiveMedicationsTool — the canonical example.
+"""GetActiveMedicationsTool — calls FHIR /MedicationRequest.
 
-This is the join from AUDIT.md §4.2: medications live in BOTH
-`prescriptions` and `lists` (where type='medication'), and "currently on"
-requires checking active=1 AND (end_date IS NULL OR end_date > today).
-
-Other tools follow this exact shape — see tools/__init__.py for the list.
+Returns each active medication as one row tagged with a citation id
+of the form `MedicationRequest#<uuid>`. The agent's prompt instructs
+it to inline-cite that id whenever it makes a claim about a med.
 """
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Any, ClassVar
 
 from copilot.bridge.openemr import OpenEMRBridge
@@ -17,15 +14,21 @@ from copilot.context.patient import PatientContext
 from copilot.tools.base import Tool, ToolResult
 
 
+# FHIR MedicationRequest.status values that mean "patient is on this drug now".
+# `active` = currently being taken. `on-hold` = temp stop, also relevant
+# (the doctor probably wants to know about it). Everything else (`completed`,
+# `cancelled`, `stopped`, `entered-in-error`, `draft`, `unknown`) is excluded.
+_ACTIVE_STATUSES = frozenset({"active", "on-hold"})
+
+
 class GetActiveMedicationsTool(Tool):
     name: ClassVar[str] = "get_active_medications"
     description: ClassVar[str] = (
-        "Return the patient's currently active medications, with strength, "
-        "route, frequency, and active/end-date metadata. Each row carries "
-        "a citation id like 'prescriptions#244' that you must use when "
-        "making any claim about that medication. Includes warnings when "
-        "the same medication appears with conflicting doses across the "
-        "prescriptions and lists tables (a known OpenEMR data hazard)."
+        "Return the patient's currently-active medications from the FHIR "
+        "MedicationRequest resource. Each row carries a citation id like "
+        "'MedicationRequest#<uuid>' that you must use when making any "
+        "claim about that medication. Excludes stopped, cancelled, "
+        "completed, and entered-in-error orders."
     )
     input_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -40,54 +43,74 @@ class GetActiveMedicationsTool(Tool):
 
     async def run(self, ctx: PatientContext, args: dict[str, Any]) -> ToolResult:
         bridge = OpenEMRBridge()
-        prescriptions = await bridge.get_prescriptions(args["patient_uuid"])
-        list_meds = await bridge.get_list_medications(args["patient_uuid"])
+        resources = await bridge.get_medication_requests(args["patient_uuid"])
 
-        today_iso = date.today().isoformat()
         rows: list[dict[str, Any]] = []
         warnings: list[str] = []
 
-        for r in prescriptions:
-            if not r.get("active"):
+        for r in resources:
+            if r.get("resourceType") != "MedicationRequest":
                 continue
-            end_date = r.get("end_date")
-            if end_date and end_date < today_iso:
-                continue
-            rows.append({
-                "id": f"prescriptions#{r['id']}",
-                "_patient_uuid": args["patient_uuid"],
-                "drug": r.get("drug"),
-                "rxnorm": r.get("rxnorm_drugcode"),
-                "dosage_text": r.get("dosage"),
-                "route": r.get("route"),
-                "frequency": r.get("interval"),
-                "free_text_instructions": r.get("drug_dosage_instructions"),
-                "start_date": r.get("start_date"),
-                "end_date": end_date,
-                "active": True,
-                "source_table": "prescriptions",
-            })
 
-        # The "is this also in lists?" cross-check — surfaces UC-3 conflicts.
-        rx_drug_names_lower = {(r.get("drug") or "").lower() for r in prescriptions}
-        for lr in list_meds:
-            if lr.get("activity") != 1:
+            status = r.get("status")
+            if status not in _ACTIVE_STATUSES:
                 continue
-            title_lower = (lr.get("title") or "").lower()
+
+            mr_uuid = r.get("id")
+            if not mr_uuid:
+                continue
+
+            # Patient compartment check belt-and-suspenders for the middleware.
+            subject_ref = (r.get("subject") or {}).get("reference", "")
+            row_patient_uuid = subject_ref.removeprefix("Patient/") if subject_ref.startswith("Patient/") else None
+            if row_patient_uuid is None:
+                row_patient_uuid = args["patient_uuid"]  # tolerate missing subject ref
+
             rows.append({
-                "id": f"lists#{lr['id']}",
-                "_patient_uuid": args["patient_uuid"],
-                "drug": lr.get("title"),
-                "begin_date": lr.get("begdate"),
-                "end_date": lr.get("enddate"),
-                "active": True,
-                "source_table": "lists",
+                "id": f"MedicationRequest#{mr_uuid}",
+                "_patient_uuid": row_patient_uuid,
+                "drug_display": _med_display(r),
+                "rxnorm": _rxnorm_code(r),
+                "dosage_text": _dosage_text(r),
+                "status": status,
+                "authored_on": r.get("authoredOn"),
+                "intent": r.get("intent"),
             })
-            if title_lower and title_lower not in rx_drug_names_lower:
-                warnings.append(
-                    f"lists#{lr['id']} references {lr.get('title')!r} but no active "
-                    f"prescriptions row matches this name — possible stale entry "
-                    f"(see AUDIT.md §4.2)."
-                )
 
         return ToolResult(rows=rows, warnings=warnings)
+
+
+# ─── FHIR field extraction helpers ────────────────────────────────────
+
+def _med_display(mr: dict[str, Any]) -> str | None:
+    """Human-readable medication name. Prefers .text, falls back to the
+    first coding's display, falls back to None."""
+    cc = mr.get("medicationCodeableConcept") or {}
+    if isinstance(cc, dict):
+        text = cc.get("text")
+        if text:
+            return text
+        for c in cc.get("coding") or []:
+            if c.get("display"):
+                return c["display"]
+    # Some implementations use medicationReference instead.
+    ref = (mr.get("medicationReference") or {}).get("display")
+    return ref
+
+
+def _rxnorm_code(mr: dict[str, Any]) -> str | None:
+    cc = mr.get("medicationCodeableConcept") or {}
+    for c in cc.get("coding") or []:
+        if c.get("system", "").endswith("rxnorm"):
+            return c.get("code")
+    return None
+
+
+def _dosage_text(mr: dict[str, Any]) -> str | None:
+    """Free-text sig — usually populated with strength/route/frequency."""
+    di = mr.get("dosageInstruction") or []
+    if di and isinstance(di, list):
+        first = di[0]
+        if isinstance(first, dict):
+            return first.get("text")
+    return None
