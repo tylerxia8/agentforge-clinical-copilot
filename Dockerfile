@@ -39,6 +39,12 @@ FROM openemr/openemr:7.0.3
 # Production-mode flag.
 ENV OPENEMR__ENVIRONMENT=prod
 
+# Work around non-idempotent auto_configure.php: if a previous deploy
+# partially created the schema, drop and recreate the DB before setup.
+COPY docker-entrypoint-wrapper.sh /docker-entrypoint-wrapper.sh
+RUN chmod +x /docker-entrypoint-wrapper.sh
+ENTRYPOINT ["/docker-entrypoint-wrapper.sh"]
+
 # Apache listens here in the upstream image; Railway maps PORT → this.
 EXPOSE 80
 
