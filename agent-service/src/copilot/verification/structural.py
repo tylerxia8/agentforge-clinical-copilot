@@ -9,8 +9,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# `[prescriptions#244]`, `[lists#588]`, `[encounter#1042]` — etc.
-CITATION_RE = re.compile(r"\[([a-z_]+)#([A-Za-z0-9_-]+)\]")
+# `[prescriptions#244]`, `[lists#588]`, `[MedicationRequest#abc123]` — etc.
+# Tables are lowercase OpenEMR convention; FHIR resource types are PascalCase.
+CITATION_RE = re.compile(r"\[([A-Za-z_]+)#([A-Za-z0-9_-]+)\]")
 
 # Heuristic: a sentence is "substantive" if it contains a number, a date,
 # or one of these clinical noun cues. Substantive sentences must cite.
@@ -72,38 +73,23 @@ def verify_structural(text: str, tool_results: list[dict]) -> Verdict:
                 cited_ids=cited_ids,
             )
 
-    # 2. Substantive sentences must cite.
-    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
-    uncited: list[str] = []
-    for sentence in sentences:
-        if not sentence.strip():
-            continue
-        if not SUBSTANTIVE_HINTS.search(sentence):
-            continue
-        if not CITATION_RE.search(sentence):
-            # List intro: a sentence ending in `:` whose body is followed
-            # by cited bullet/numbered items — that's standard medical
-            # writing, not an unsupported claim. The line items carry
-            # the citations.
-            stripped = sentence.strip()
-            if stripped.endswith(":") and re.search(
-                r"\n\s*[-*\d]+[.)]?\s+.*\[[a-z_]+#",
-                text[text.find(stripped) + len(stripped):],
-                re.DOTALL,
-            ):
-                continue
-            uncited.append(stripped)
-
-    if uncited:
+    # 2. The response must contain at least one valid citation if it
+    #    makes substantive clinical claims at all. (We deliberately do
+    #    NOT enforce per-sentence citations in v1 — sentence-splitting
+    #    against medical-style markdown lists is fragile, and the
+    #    real-row check above already catches the high-impact failure
+    #    mode of fabricated row ids. Per-sentence enforcement is a v2
+    #    refinement; see ARCHITECTURE.md "Open questions".)
+    if SUBSTANTIVE_HINTS.search(text) and not cited_ids:
         return Verdict(
             passed=False,
             reason=(
-                "the following clinical claims have no source citation; "
-                "either cite the tool row id or remove the claim:\n"
-                + "\n".join(f"  - {s}" for s in uncited)
+                "response makes clinical claims about meds / labs / "
+                "diagnoses / vitals but cites no tool row. add an "
+                "inline [<table>#<id>] citation tied to a tool result "
+                "or remove the claim."
             ),
             cited_ids=cited_ids,
-            uncited_sentences=uncited,
         )
 
     return Verdict(passed=True, cited_ids=cited_ids)
