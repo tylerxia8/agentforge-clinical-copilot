@@ -35,12 +35,16 @@ if [ -n "$MYSQL_HOST" ] && [ -n "$MYSQL_ROOT_PASS" ] && [ -n "$MYSQL_DATABASE" ]
     # Don't delete the file — the stock openemr.sh entrypoint shells out to
     # it and will crash-loop if it's missing. Replace with a no-op stub
     # instead so the include succeeds and immediately exits clean.
-    echo "[entrypoint-wrapper] Complete schema detected ($TABLE_COUNT tables, $VERSION_ROWS version rows) — writing sqlconf.php and neutralising auto_configure.php."
+    echo "[entrypoint-wrapper] Complete schema detected ($TABLE_COUNT tables, $VERSION_ROWS version rows) — writing sqlconf.php with \$config=1."
 
     # openemr.sh checks if config succeeded by sourcing sqlconf.php and
     # reading $config — must equal "1". The stock image ships with
     # $config=0; on a fresh container, no setup has run, so we must
-    # write the file ourselves with the correct credentials.
+    # write the file ourselves with the correct credentials. With
+    # $config=1 already in place, the real auto_configure.php detects
+    # "already configured" and skips its CREATE TABLE pass — and we
+    # MUST let it run so it can do the runtime configuration the app
+    # actually needs to serve requests.
     cat > /var/www/localhost/htdocs/openemr/sites/default/sqlconf.php <<EOF
 <?php
 
@@ -63,17 +67,6 @@ global \$sqlconf;
 
 \$config = 1;
 EOF
-
-    # Neutralise auto_configure.php so openemr.sh's call to it doesn't
-    # crash on CREATE TABLE (the schema already exists). The stub still
-    # echoes the success marker since the real auto_configure.php does.
-    cat > /var/www/localhost/htdocs/openemr/auto_configure.php <<'PHP'
-<?php
-// Replaced by docker-entrypoint-wrapper.sh: schema already complete,
-// so setup must not re-run (auto_configure.php is non-idempotent).
-echo "OpenEMR configured.\n";
-exit(0);
-PHP
   else
     echo "[entrypoint-wrapper] Empty database — proceeding with fresh setup."
   fi
