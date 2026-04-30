@@ -15,13 +15,17 @@ if [ -n "$MYSQL_HOST" ] && [ -n "$MYSQL_ROOT_PASS" ] && [ -n "$MYSQL_DATABASE" ]
     sleep 5
   done
 
-  # Check if the database has the marker table (meaning setup started
-  # but never completed successfully)
-  TABLE_EXISTS=$(mysql -h"$MYSQL_HOST" -P"${MYSQL_PORT:-3306}" -u"${MYSQL_ROOT_USER:-root}" -p"$MYSQL_ROOT_PASS" \
-    -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_DATABASE' AND table_name='ccda_field_mapping'" 2>/dev/null || echo "0")
+  # A complete OpenEMR setup populates the `version` table as one of its
+  # final steps.  If the DB has tables but `version` is empty or missing,
+  # the previous setup was partial and we need to reset.
+  TABLE_COUNT=$(mysql -h"$MYSQL_HOST" -P"${MYSQL_PORT:-3306}" -u"${MYSQL_ROOT_USER:-root}" -p"$MYSQL_ROOT_PASS" \
+    -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_DATABASE'" 2>/dev/null || echo "0")
 
-  if [ "$TABLE_EXISTS" = "1" ]; then
-    echo "[entrypoint-wrapper] Found stale partial schema — dropping and recreating database '$MYSQL_DATABASE'."
+  VERSION_ROWS=$(mysql -h"$MYSQL_HOST" -P"${MYSQL_PORT:-3306}" -u"${MYSQL_ROOT_USER:-root}" -p"$MYSQL_ROOT_PASS" \
+    -N -e "SELECT COUNT(*) FROM \`$MYSQL_DATABASE\`.version" 2>/dev/null || echo "0")
+
+  if [ "$TABLE_COUNT" -gt "0" ] && [ "$VERSION_ROWS" = "0" ]; then
+    echo "[entrypoint-wrapper] Found partial schema ($TABLE_COUNT tables, no version rows) — dropping and recreating database '$MYSQL_DATABASE'."
     mysql -h"$MYSQL_HOST" -P"${MYSQL_PORT:-3306}" -u"${MYSQL_ROOT_USER:-root}" -p"$MYSQL_ROOT_PASS" \
       -e "DROP DATABASE IF EXISTS \`$MYSQL_DATABASE\`; CREATE DATABASE \`$MYSQL_DATABASE\`;"
     echo "[entrypoint-wrapper] Database reset complete."
