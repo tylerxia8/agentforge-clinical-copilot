@@ -35,10 +35,38 @@ if [ -n "$MYSQL_HOST" ] && [ -n "$MYSQL_ROOT_PASS" ] && [ -n "$MYSQL_DATABASE" ]
     # Don't delete the file — the stock openemr.sh entrypoint shells out to
     # it and will crash-loop if it's missing. Replace with a no-op stub
     # instead so the include succeeds and immediately exits clean.
-    echo "[entrypoint-wrapper] Complete schema detected ($TABLE_COUNT tables, $VERSION_ROWS version rows) — neutralising auto_configure.php."
-    # The stock openemr.sh greps this file's output for a success marker,
-    # not just exit code, so we MUST echo "OpenEMR configured." (the same
-    # string the real auto_configure.php prints on success).
+    echo "[entrypoint-wrapper] Complete schema detected ($TABLE_COUNT tables, $VERSION_ROWS version rows) — writing sqlconf.php and neutralising auto_configure.php."
+
+    # openemr.sh checks if config succeeded by sourcing sqlconf.php and
+    # reading $config — must equal "1". The stock image ships with
+    # $config=0; on a fresh container, no setup has run, so we must
+    # write the file ourselves with the correct credentials.
+    cat > /var/www/localhost/htdocs/openemr/sites/default/sqlconf.php <<EOF
+<?php
+
+//  OpenEMR
+//  MySQL Config (written by docker-entrypoint-wrapper.sh)
+
+\$host   = '${MYSQL_HOST}';
+\$port   = '${MYSQL_PORT:-3306}';
+\$login  = '${MYSQL_USER}';
+\$pass   = '${MYSQL_PASS}';
+\$dbase  = '${MYSQL_DATABASE}';
+
+\$sqlconf = [];
+global \$sqlconf;
+\$sqlconf["host"]  = \$host;
+\$sqlconf["port"]  = \$port;
+\$sqlconf["login"] = \$login;
+\$sqlconf["pass"]  = \$pass;
+\$sqlconf["dbase"] = \$dbase;
+
+\$config = 1;
+EOF
+
+    # Neutralise auto_configure.php so openemr.sh's call to it doesn't
+    # crash on CREATE TABLE (the schema already exists). The stub still
+    # echoes the success marker since the real auto_configure.php does.
     cat > /var/www/localhost/htdocs/openemr/auto_configure.php <<'PHP'
 <?php
 // Replaced by docker-entrypoint-wrapper.sh: schema already complete,
