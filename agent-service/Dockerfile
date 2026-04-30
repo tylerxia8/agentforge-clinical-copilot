@@ -7,12 +7,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install dependencies first so Docker can cache the layer.
+# pyproject.toml's setuptools config does packages.find under src/, so
+# the src tree has to exist BEFORE pip install -e . runs (otherwise
+# setuptools errors with "egg_base 'src' does not exist").
 COPY pyproject.toml ./
-RUN pip install --upgrade pip && \
-    pip install -e .
-
 COPY src/ ./src/
+
+RUN pip install --upgrade pip && pip install -e .
 
 EXPOSE 8000
 
