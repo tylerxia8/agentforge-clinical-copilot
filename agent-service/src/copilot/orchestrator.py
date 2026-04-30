@@ -54,6 +54,17 @@ class Orchestrator:
         redacted_bundle = tokens.tokenize_dict(bundle)
         redacted_message = tokens.tokenize_text(message)
 
+        # 2b. Register the bundle's tool results with the verifier — without
+        # this, citations to rows the model SAW (in the bundle) but didn't
+        # FETCH (via tool_use) get rejected as invented. The bundle is a
+        # latency optimization, not a way to bypass verification.
+        seen_tool_results: list[dict[str, Any]] = []
+        for key in ("medications", "problems", "allergies", "encounters",
+                    "vitals", "labs", "immunizations"):
+            tr = redacted_bundle.get(key)
+            if isinstance(tr, dict) and "rows" in tr:
+                seen_tool_results.append(tr)
+
         # 3. Build the message sequence the model sees.
         messages: list[dict[str, Any]] = list(history)
         messages.append({
@@ -65,9 +76,9 @@ class Orchestrator:
             ),
         })
 
-        # 4. Tool-use loop. We collect every tool result so the verifier
+        # 4. Tool-use loop. We append every tool result so the verifier
         #    can check that citations refer to rows we actually returned.
-        seen_tool_results: list[dict[str, Any]] = []
+        #    (seen_tool_results was pre-populated from the bundle in step 2b.)
         for round_n in range(settings.max_tool_rounds):
             response = await self.llm.complete(
                 messages=messages,

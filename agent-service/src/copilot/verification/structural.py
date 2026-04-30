@@ -81,7 +81,18 @@ def verify_structural(text: str, tool_results: list[dict]) -> Verdict:
         if not SUBSTANTIVE_HINTS.search(sentence):
             continue
         if not CITATION_RE.search(sentence):
-            uncited.append(sentence.strip())
+            # List intro: a sentence ending in `:` whose body is followed
+            # by cited bullet/numbered items — that's standard medical
+            # writing, not an unsupported claim. The line items carry
+            # the citations.
+            stripped = sentence.strip()
+            if stripped.endswith(":") and re.search(
+                r"\n\s*[-*\d]+[.)]?\s+.*\[[a-z_]+#",
+                text[text.find(stripped) + len(stripped):],
+                re.DOTALL,
+            ):
+                continue
+            uncited.append(stripped)
 
     if uncited:
         return Verdict(
