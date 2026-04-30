@@ -11,7 +11,7 @@ for the Gauntlet AI Austin admission sprint.
 | [USERS.md](USERS.md) | Target user (PCP, 20-patient day) and the use cases the agent addresses |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The AI integration plan — verification, observability, failure modes, scaling |
 
-**Deployed app:** _<add Railway URL after first deploy>_
+**Deployed app:** https://openemr-production-0996.up.railway.app/
 
 **Stack:** OpenEMR (PHP 8.2 + Apache + MariaDB) → custom
 `oe-module-clinical-copilot/` module → Python agent service
