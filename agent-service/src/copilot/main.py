@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel
 
 from copilot.context.cache import ContextCache
@@ -23,7 +23,7 @@ class ChatRequest(BaseModel):
     history: list[dict[str, Any]] = []
 
 
-def _ctx_from_token(authorization: str | None = None) -> PatientContext:
+def _ctx_from_token(authorization: str | None = Header(default=None)) -> PatientContext:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
     try:
