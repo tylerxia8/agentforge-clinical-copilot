@@ -29,8 +29,11 @@ if [ -n "$MYSQL_HOST" ] && [ -n "$MYSQL_ROOT_PASS" ] && [ -n "$MYSQL_DATABASE" ]
     mysql -h"$MYSQL_HOST" -P"${MYSQL_PORT:-3306}" -u"${MYSQL_ROOT_USER:-root}" -p"$MYSQL_ROOT_PASS" \
       -e "DROP DATABASE IF EXISTS \`$MYSQL_DATABASE\`; CREATE DATABASE \`$MYSQL_DATABASE\`;"
     echo "[entrypoint-wrapper] Database reset complete."
+  elif [ "$TABLE_COUNT" -gt "0" ] && [ "$VERSION_ROWS" -gt "0" ]; then
+    echo "[entrypoint-wrapper] Complete schema detected ($TABLE_COUNT tables, $VERSION_ROWS version rows) — removing auto_configure.php to skip setup."
+    rm -f /var/www/localhost/htdocs/openemr/auto_configure.php
   else
-    echo "[entrypoint-wrapper] No stale schema detected — proceeding normally."
+    echo "[entrypoint-wrapper] Empty database — proceeding with fresh setup."
   fi
 fi
 
