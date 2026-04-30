@@ -19,6 +19,7 @@ from copilot.context.patient import PatientContext
 from copilot.llm.anthropic_client import LLM
 from copilot.llm.prompts import SYSTEM_PROMPT
 from copilot.middleware import patient_context as middleware
+from copilot.observability import langfuse_client, observe
 from copilot.redaction.tokens import TokenMap
 from copilot.settings import settings
 from copilot.tools import all_tool_specs, get_tool
@@ -40,12 +41,29 @@ class Orchestrator:
         self.llm = LLM()
         self.cache = ContextCache()
 
+    @observe(name="chat_turn")
     async def run_turn(
         self,
         ctx: PatientContext,
         message: str,
         history: list[dict[str, Any]],
     ) -> ChatResponse:
+        # Tag the trace with patient + user identifiers so traces are
+        # filterable in Langfuse by chart / user.
+        if langfuse_client is not None:
+            try:
+                langfuse_client.update_current_trace(
+                    user_id=str(ctx.user_id),
+                    session_id=ctx.patient_uuid,
+                    metadata={
+                        "patient_uuid": ctx.patient_uuid,
+                        "encounter_uuid": ctx.encounter_uuid,
+                    },
+                    input={"message": message, "history_len": len(history)},
+                )
+            except Exception:  # noqa: BLE001
+                pass  # never let observability fail the turn
+
         # 1. Load (or warm) the per-patient context bundle.
         bundle = await self.cache.get_or_warm(ctx)
 
@@ -118,7 +136,11 @@ class Orchestrator:
                     })
                     continue
 
-                # Dispatch.
+                # Dispatch. (Per-tool spans are a v2 refinement — the
+                # @observe on run_turn already gives us a root trace, and
+                # @observe on llm.complete gives us LLM generations under
+                # it. Tool calls are visible in the trace's output via
+                # seen_tool_results.)
                 try:
                     raw = await tool.run(ctx, block.input)
                 except Exception as exc:  # noqa: BLE001
@@ -170,7 +192,7 @@ class Orchestrator:
         if not verdict.passed:
             # Final-failure refusal — the verified-facts-only response from
             # ARCHITECTURE.md §4.1.
-            return ChatResponse(
+            refused_response = ChatResponse(
                 text=(
                     "I'm not confident in part of that answer. Here's what "
                     "I can defend with sources:\n\n"
@@ -180,12 +202,16 @@ class Orchestrator:
                 refused=True,
                 refusal_reason=verdict.reason,
             )
+            _record_trace_output(refused_response)
+            return refused_response
 
         # 7. Rehydrate PHI tokens for the UI.
-        return ChatResponse(
+        ok_response = ChatResponse(
             text=tokens.rehydrate(final_text),
             sources=sorted(verdict.cited_ids),
         )
+        _record_trace_output(ok_response)
+        return ok_response
 
     def _verify(self, text: str, tool_results: list[dict[str, Any]]) -> Verdict:
         structural = verify_structural(text, tool_results)
@@ -198,6 +224,25 @@ class Orchestrator:
         # contains nuanced clinical reasoning (e.g. UC-3 reconciliation),
         # invoke verification.judge for an LLM-as-judge approval.
         return structural
+
+
+def _record_trace_output(response: ChatResponse) -> None:
+    """Annotate the current Langfuse trace with the final response shape.
+    Silent no-op when Langfuse isn't configured."""
+    if langfuse_client is None:
+        return
+    try:
+        langfuse_client.update_current_trace(
+            output={
+                "text": response.text,
+                "sources": response.sources,
+                "refused": response.refused,
+                "refusal_reason": response.refusal_reason,
+            },
+            tags=["refused"] if response.refused else ["accepted"],
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _extract_text(content: list[Any]) -> str:
