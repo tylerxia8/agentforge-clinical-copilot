@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     redis_url: str = Field("redis://localhost:6379/0", alias="REDIS_URL")
     context_cache_ttl_seconds: int = 300
 
+    # --- Demo UI ---
+    # When enabled, GET / serves a standalone chat page and POST /demo/chat
+    # accepts (patient_uuid, message) and mints a token internally. Useful
+    # for the Thursday demo before the OpenEMR PHP module ships. Turn off
+    # in production once the embedded panel is live.
+    demo_mode_enabled: bool = Field(True, alias="DEMO_MODE_ENABLED")
+
     # --- Observability ---
     langfuse_public_key: str | None = Field(None, alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: str | None = Field(None, alias="LANGFUSE_SECRET_KEY")
