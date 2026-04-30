@@ -36,10 +36,14 @@ if [ -n "$MYSQL_HOST" ] && [ -n "$MYSQL_ROOT_PASS" ] && [ -n "$MYSQL_DATABASE" ]
     # it and will crash-loop if it's missing. Replace with a no-op stub
     # instead so the include succeeds and immediately exits clean.
     echo "[entrypoint-wrapper] Complete schema detected ($TABLE_COUNT tables, $VERSION_ROWS version rows) — neutralising auto_configure.php."
+    # The stock openemr.sh greps this file's output for a success marker,
+    # not just exit code, so we MUST echo "OpenEMR configured." (the same
+    # string the real auto_configure.php prints on success).
     cat > /var/www/localhost/htdocs/openemr/auto_configure.php <<'PHP'
 <?php
 // Replaced by docker-entrypoint-wrapper.sh: schema already complete,
 // so setup must not re-run (auto_configure.php is non-idempotent).
+echo "OpenEMR configured.\n";
 exit(0);
 PHP
   else
@@ -47,5 +51,7 @@ PHP
   fi
 fi
 
-# Delegate to the stock OpenEMR entrypoint
-exec /var/www/localhost/htdocs/openemr/openemr.sh "$@"
+# Ensure the entrypoint is invokable. Some runtime hooks in the image
+# strip the execute bit on /var/www files when fixing ownership; using
+# `sh` avoids depending on it.
+exec sh /var/www/localhost/htdocs/openemr/openemr.sh "$@"
