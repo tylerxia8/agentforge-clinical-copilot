@@ -30,8 +30,18 @@ if [ -n "$MYSQL_HOST" ] && [ -n "$MYSQL_ROOT_PASS" ] && [ -n "$MYSQL_DATABASE" ]
       -e "DROP DATABASE IF EXISTS \`$MYSQL_DATABASE\`; CREATE DATABASE \`$MYSQL_DATABASE\`;"
     echo "[entrypoint-wrapper] Database reset complete."
   elif [ "$TABLE_COUNT" -gt "0" ] && [ "$VERSION_ROWS" -gt "0" ]; then
-    echo "[entrypoint-wrapper] Complete schema detected ($TABLE_COUNT tables, $VERSION_ROWS version rows) — removing auto_configure.php to skip setup."
-    rm -f /var/www/localhost/htdocs/openemr/auto_configure.php
+    # Complete schema → setup must not run a second time (auto_configure.php
+    # uses CREATE TABLE, not CREATE TABLE IF NOT EXISTS, so a re-run crashes).
+    # Don't delete the file — the stock openemr.sh entrypoint shells out to
+    # it and will crash-loop if it's missing. Replace with a no-op stub
+    # instead so the include succeeds and immediately exits clean.
+    echo "[entrypoint-wrapper] Complete schema detected ($TABLE_COUNT tables, $VERSION_ROWS version rows) — neutralising auto_configure.php."
+    cat > /var/www/localhost/htdocs/openemr/auto_configure.php <<'PHP'
+<?php
+// Replaced by docker-entrypoint-wrapper.sh: schema already complete,
+// so setup must not re-run (auto_configure.php is non-idempotent).
+exit(0);
+PHP
   else
     echo "[entrypoint-wrapper] Empty database — proceeding with fresh setup."
   fi
