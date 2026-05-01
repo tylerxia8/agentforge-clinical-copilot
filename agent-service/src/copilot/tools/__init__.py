@@ -19,12 +19,18 @@ pattern, just hitting a different REST endpoint):
 - GetPatientSummaryTool  (composite — calls others)
 """
 
+from copilot.tools.allergies import GetAllergiesTool
 from copilot.tools.base import Tool, ToolResult
 from copilot.tools.medications import GetActiveMedicationsTool
+from copilot.tools.problems import GetActiveProblemsTool
 
 ALL_TOOLS: list[Tool] = [
     GetActiveMedicationsTool(),
-    # Add others here as they're implemented.
+    GetActiveProblemsTool(),
+    GetAllergiesTool(),
+    # Add others here as they're implemented:
+    # GetRecentEncountersTool, GetVitalHistoryTool, GetLabHistoryTool,
+    # GetImmunizationsTool, GetTodayScheduleTool.
 ]
 
 

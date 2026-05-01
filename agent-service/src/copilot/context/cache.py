@@ -45,22 +45,46 @@ class ContextCache:
         )
 
     async def warm(self, ctx: PatientContext) -> None:
-        """Build the per-patient bundle by running all read tools in
-        parallel and stash the result. Called from the /warm endpoint.
+        """Build the per-patient bundle by running implemented read tools
+        in parallel and stash the result. Called from /warm and lazily
+        from get_or_warm() on cache miss.
 
-        TODO(thursday): replace stub bundle with real parallel tool calls.
+        Each tool is fan-out so a slow tool (e.g. lab history) can't
+        block the whole bundle; we accept partial success and log the
+        failures rather than refusing the whole turn.
         """
-        from copilot.tools.medications import GetActiveMedicationsTool
+        import asyncio
 
-        # Sketch — Thursday will fan out 5+ tools concurrently with asyncio.gather
-        meds = await GetActiveMedicationsTool().run(ctx, {"patient_uuid": ctx.patient_uuid})
-        bundle = {
-            "patient_uuid": ctx.patient_uuid,
-            "medications": meds.model_dump(),
-            # demographics, problems, allergies, encounters, vitals, labs — TBD
-        }
+        from copilot.tools.allergies import GetAllergiesTool
+        from copilot.tools.medications import GetActiveMedicationsTool
+        from copilot.tools.problems import GetActiveProblemsTool
+
+        args = {"patient_uuid": ctx.patient_uuid}
+        meds_task = GetActiveMedicationsTool().run(ctx, args)
+        problems_task = GetActiveProblemsTool().run(ctx, args)
+        allergies_task = GetAllergiesTool().run(ctx, args)
+
+        results = await asyncio.gather(
+            meds_task, problems_task, allergies_task,
+            return_exceptions=True,
+        )
+
+        bundle: dict[str, Any] = {"patient_uuid": ctx.patient_uuid}
+        for key, result in zip(("medications", "problems", "allergies"), results, strict=True):
+            if isinstance(result, Exception):
+                logger.warning("warm: %s failed: %s", key, result)
+                bundle[key] = {"rows": [], "warnings": [f"{key} fetch failed: {result}"]}
+            else:
+                bundle[key] = result.model_dump()
+
         await self.put(ctx.patient_uuid, bundle)
-        logger.info("warmed context for patient_uuid=%s", ctx.patient_uuid)
+        logger.info(
+            "warmed context for patient_uuid=%s (meds=%d, problems=%d, allergies=%d)",
+            ctx.patient_uuid,
+            len(bundle["medications"]["rows"]),
+            len(bundle["problems"]["rows"]),
+            len(bundle["allergies"]["rows"]),
+        )
 
     async def get_or_warm(self, ctx: PatientContext) -> dict[str, Any]:
         existing = await self.get(ctx.patient_uuid)

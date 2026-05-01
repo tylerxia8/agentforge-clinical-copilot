@@ -146,16 +146,32 @@ class OpenEMRBridge:
     # --- patient-scoped reads ---
 
     async def get_medication_requests(self, patient_uuid: str) -> list[dict[str, Any]]:
-        """FHIR MedicationRequest for a patient. Returns the FHIR
-        resource shape — the tool layer maps to our row format."""
+        """FHIR MedicationRequest for a patient."""
         bundle = await self._fhir_get("/MedicationRequest", {"patient": patient_uuid})
         return self._entries(bundle)
 
-    # Stubs follow the same pattern as get_medication_requests — fill in
-    # for Sunday/v2:
+    async def get_conditions(self, patient_uuid: str) -> list[dict[str, Any]]:
+        """FHIR Condition for a patient — problem list (active +
+        historical). Tool layer filters to active by clinicalStatus."""
+        bundle = await self._fhir_get("/Condition", {"patient": patient_uuid})
+        return self._entries(bundle)
+
+    async def get_allergies(self, patient_uuid: str) -> list[dict[str, Any]]:
+        """FHIR AllergyIntolerance — confirmed + unconfirmed. Tool
+        layer surfaces verification status alongside the substance."""
+        bundle = await self._fhir_get("/AllergyIntolerance", {"patient": patient_uuid})
+        return self._entries(bundle)
+
+    async def get_encounters(self, patient_uuid: str) -> list[dict[str, Any]]:
+        """FHIR Encounter — visit history. Tool layer typically
+        sorts by date desc and limits to most recent N."""
+        bundle = await self._fhir_get("/Encounter", {"patient": patient_uuid})
+        return self._entries(bundle)
+
+    # Stubs to mirror the pattern above — fill in once their tools are
+    # wired:
     #
-    # async def get_conditions(self, patient_uuid):       /Condition
-    # async def get_allergies(self, patient_uuid):        /AllergyIntolerance
-    # async def get_encounters(self, patient_uuid):       /Encounter
+    # async def get_observations(self, patient_uuid):     /Observation (vitals + labs)
+    # async def get_immunizations(self, patient_uuid):    /Immunization
     # async def get_observations(self, patient_uuid):     /Observation (vitals + labs)
     # async def get_immunizations(self, patient_uuid):    /Immunization
