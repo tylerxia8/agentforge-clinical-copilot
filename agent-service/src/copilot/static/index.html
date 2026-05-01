@@ -102,7 +102,36 @@ aside h2 {
   background: #e7f1ff;
 }
 
-.patient-card .name { font-weight: 600; font-size: 14px; }
+.patient-card.rich {
+  border-color: #1a7f37;
+  background: #f0fdf4;
+}
+
+.patient-card.rich.active {
+  border-color: #0d6e2a;
+  background: #dcfce7;
+}
+
+.patient-card .name {
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.patient-card .badge {
+  font-size: 10px;
+  font-weight: 500;
+  background: #dcfce7;
+  color: #1a7f37;
+  border: 1px solid #86efac;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 .patient-card .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .patient-card .uuid { font-family: var(--code-font); font-size: 11px; color: var(--muted); margin-top: 4px; }
 
@@ -358,10 +387,26 @@ a:hover { text-decoration: underline; }
 </div>
 
 <script>
+// All 14 demo patients from sql/example_patient_data.sql, surfaced
+// from live FHIR via their UUIDs. Farrah is the only one currently
+// seeded with clinical data (medications, problems, allergies,
+// encounters) — the `rich` flag highlights that visually so the
+// demo viewer knows which card to click for the UC-1 snapshot.
 const PATIENTS = [
-  { uuid: "a1ab5594-20c8-4363-be30-75d287be735d", name: "Farrah Rolle", note: "F · DOB 1973-10-11 · 2 active meds" },
-  { uuid: "a1ab5594-20a2-4c30-b8d0-f7a153422786", name: "Ted Shaw",     note: "M · DOB 1947-03-11 · empty chart" },
-  { uuid: "a1ab5594-20c6-40ec-b85b-7dd2c4c728ca", name: "Eduardo Perez", note: "M · DOB 1957-01-09 · empty chart" },
+  { uuid: "a1ab5594-20c8-4363-be30-75d287be735d", name: "Farrah Rolle",   note: "F · DOB 1973-10-11 · 2 meds · 2 problems · 1 allergy · 2 visits", rich: true },
+  { uuid: "a1ab5594-20a2-4c30-b8d0-f7a153422786", name: "Ted Shaw",       note: "M · DOB 1947-03-11 · empty chart" },
+  { uuid: "a1ab5594-20c6-40ec-b85b-7dd2c4c728ca", name: "Eduardo Perez",  note: "M · DOB 1957-01-09 · empty chart" },
+  { uuid: "a1ab5594-20ca-424c-88ff-0856c00ba55a", name: "Nora Cohen",     note: "F · DOB 1967-06-04 · empty chart" },
+  { uuid: "a1ab5594-20cb-4747-bc61-ad97be03e203", name: "Jim Moses",      note: "M · DOB 1945-02-14 · empty chart" },
+  { uuid: "a1ab5594-20cc-4b4c-8e09-811bbadc90df", name: "Richard Jones",  note: "DOB 1940-12-16 · empty chart" },
+  { uuid: "a1ab5594-20ce-4831-822f-3ef3ba4eab31", name: "Ilias Jenane",   note: "F · DOB 1933-03-22 · empty chart" },
+  { uuid: "a1ab5594-20cf-402e-a49f-a177692ec60b", name: "John Dockerty",  note: "DOB 1977-05-02 · empty chart" },
+  { uuid: "a1ab5594-20d0-4a73-b63b-1a099b4d3caa", name: "James Janssen",  note: "M · DOB 1966-04-28 · empty chart" },
+  { uuid: "a1ab5594-20d2-485c-8de8-93555fbc3305", name: "Jason Binder",   note: "M · DOB 1961-12-11 · empty chart" },
+  { uuid: "a1ab5594-20d3-4468-a906-2d2d923d454b", name: "Robert Dickey",  note: "DOB 1955-04-12 · empty chart" },
+  { uuid: "a1ab5594-20d4-409b-bb4e-8730c7986ce3", name: "Jillian Mahoney", note: "F · DOB 1968-08-11 · empty chart" },
+  { uuid: "a1ab5594-20d5-4bdb-ac76-cf300ab30440", name: "Wallace Buckley", note: "DOB 1952-04-03 · empty chart" },
+  { uuid: "a1ab5594-20d7-439d-9817-498680946141", name: "Brent Perez",    note: "M · DOB 1960-01-01 · empty chart" },
 ];
 
 const state = {
@@ -379,9 +424,10 @@ const sendBtn = document.getElementById("send");
 
 PATIENTS.forEach((p, i) => {
   const card = document.createElement("div");
-  card.className = "patient-card";
+  card.className = "patient-card" + (p.rich ? " rich" : "");
+  const badge = p.rich ? '<span class="badge">rich chart</span>' : "";
   card.innerHTML = `
-    <div class="name">${p.name}</div>
+    <div class="name">${p.name}${badge}</div>
     <div class="meta">${p.note}</div>
     <div class="uuid">${p.uuid.substring(0, 8)}…</div>
   `;
