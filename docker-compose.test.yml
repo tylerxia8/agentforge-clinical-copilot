@@ -1,0 +1,60 @@
+# Local repro of the Railway openemr deploy with the co-pilot module
+# baked in. Mirrors the Railway service shape (production image,
+# entrypoint wrapper, env-var-driven DB config) but talks to a local
+# MySQL we control so we can iterate fast.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up --build
+#   # In another terminal, watch /healthz once Apache claims to be up:
+#   curl -sIL http://localhost:8090/
+#
+# Tear down completely (drops the test DB):
+#   docker compose -f docker-compose.test.yml down -v
+
+services:
+  mysql-test:
+    image: mysql:8
+    restart: unless-stopped
+    command:
+      - mysqld
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: testroot
+      MYSQL_DATABASE: openemr
+      MYSQL_USER: openemr
+      MYSQL_PASSWORD: openemrpass
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-test-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-ptestroot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  openemr-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    restart: "no"   # so we see the failure once and can inspect, not loop
+    ports:
+      - "8090:80"
+    environment:
+      MYSQL_HOST: mysql-test
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: openemr
+      MYSQL_USER: openemr
+      MYSQL_PASS: openemrpass
+      MYSQL_ROOT_USER: root
+      MYSQL_ROOT_PASS: testroot
+      OE_USER: admin
+      OE_PASS: pass
+      OPENEMR__ENVIRONMENT: prod
+    depends_on:
+      mysql-test:
+        condition: service_healthy
+
+volumes:
+  mysql-test-data:

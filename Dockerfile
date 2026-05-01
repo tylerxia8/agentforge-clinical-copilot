@@ -45,19 +45,23 @@ COPY docker-entrypoint-wrapper.sh /docker-entrypoint-wrapper.sh
 RUN chmod +x /docker-entrypoint-wrapper.sh
 ENTRYPOINT ["/docker-entrypoint-wrapper.sh"]
 
-# Module COPY temporarily disabled — the deploy with the module baked
-# in stalled past the 15-min healthcheck window. Unclear yet whether
-# it's the COPY itself, the module's bootstrap auto-loading, or just
-# image-pull time on Railway's edge. Diagnosing in the next iteration:
-# revert to known-good base, confirm boot, then re-add COPY with a
-# minimal stub to isolate.
-#
-# Sunday's "deployed embedded chat panel" goal goes through the
-# standalone /demo UI on the agent service for now. The OpenEMR
-# module source ships in the repo and works on local docker-compose.
-#
-# COPY --chown=apache:apache interface/modules/custom_modules/oe-module-clinical-copilot \
-#      /var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-clinical-copilot
+# Bake the AgentForge Clinical Co-Pilot module into the image. After
+# install via OpenEMR's Module Manager UI, this renders the chat
+# panel into the patient chart.
+COPY --chown=apache:apache interface/modules/custom_modules/oe-module-clinical-copilot \
+     /var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-clinical-copilot
+
+# Boot-stall fix —
+#   openemr.sh runs `find . -not -perm 600 -exec chmod 600 {} +` on
+#   first start, walking ~57K files. Under Docker overlayfs every
+#   chmod copies the file from the read-only image layer to the
+#   container's writable layer (~1 GB of write I/O on a clean boot)
+#   and pushed Railway's first-boot past the 15-min healthcheck.
+#   Doing the chmod here writes ONE image layer in-place; the
+#   runtime find then sees nothing to change and finishes in seconds.
+#   Diagnosed via local Dockerfile.test + docker-compose.test.yml.
+RUN cd /var/www/localhost/htdocs/openemr && \
+    find . -not -perm 600 -exec chmod 600 {} +
 
 # Apache listens here in the upstream image; Railway maps PORT → this.
 EXPOSE 80

@@ -1,0 +1,26 @@
+# Force LF on shell scripts and Dockerfiles so Windows checkouts don't
+# break Docker builds (a `#!/bin/sh\r` shebang fails to exec on Linux).
+*.sh           text eol=lf
+*.bash         text eol=lf
+Dockerfile*    text eol=lf
+.dockerignore  text eol=lf
+
+# Python / config / docs — repo-wide LF for portability.
+*.py           text eol=lf
+*.toml         text eol=lf
+*.yaml         text eol=lf
+*.yml          text eol=lf
+*.json         text eol=lf
+*.md           text eol=lf
+*.html         text eol=lf
+*.css          text eol=lf
+*.js           text eol=lf
+*.sql          text eol=lf
+
+# Binary — never touch.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
