@@ -4,7 +4,6 @@ namespace OpenEMR\Modules\ClinicalCopilot\Listeners;
 
 use OpenEMR\Common\Csrf\CsrfUtils;
 use OpenEMR\Common\Uuid\UuidRegistry;
-use OpenEMR\Core\OEGlobalsBag;
 use OpenEMR\Events\PatientDemographics\RenderEvent;
 use OpenEMR\Events\PatientDemographics\ViewEvent;
 use OpenEMR\Modules\ClinicalCopilot\Auth\AgentTokenMinter;
@@ -94,14 +93,13 @@ final class PatientViewedListener
     private function buildClient(): ?AgentClient
     {
         try {
-            $globals = OEGlobalsBag::getInstance();
-            $secret = (string) ($globals->get('copilot_agent_shared_secret') ?? '');
+            $secret = (string) ($GLOBALS['copilot_agent_shared_secret'] ?? '');
             if ($secret === '') {
                 $this->logger->info('copilot warm skipped — shared secret not configured');
                 return null;
             }
             return new AgentClient(
-                (string) ($globals->get('copilot_agent_url') ?? 'http://agent-service:8000'),
+                (string) ($GLOBALS['copilot_agent_url'] ?? 'http://agent-service:8000'),
                 new AgentTokenMinter($secret),
                 $this->logger,
             );

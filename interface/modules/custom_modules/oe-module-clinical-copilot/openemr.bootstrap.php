@@ -4,24 +4,22 @@
  * Clinical Co-Pilot — module bootstrap.
  *
  * Loaded by OpenEMR's Module Loader on every request once the module is
- * enabled. Two responsibilities:
- *   1. Register our PSR-4 namespace so the Bootstrap class can be loaded.
- *   2. Hand the event dispatcher to Bootstrap::subscribeToEvents().
+ * enabled. The Module Loader pre-sets two globals for us:
+ *   - $classLoader: an OpenEMR\Core\ModulesClassLoader instance
+ *   - $GLOBALS['kernel']: the OpenEMR Kernel exposing getEventDispatcher()
  *
- * Mirror of oe-module-dashboard-context/openemr.bootstrap.php — this is
- * the OpenEMR-blessed shape; don't deviate.
+ * We use those instead of OEGlobalsBag (which is 8.x-only). This keeps
+ * the module compatible with OpenEMR 7.0.3 — the version that ships in
+ * the production Docker image our deployment is based on.
  */
 
-use OpenEMR\Core\ModulesClassLoader;
-use OpenEMR\Core\OEGlobalsBag;
 use OpenEMR\Modules\ClinicalCopilot\Bootstrap;
 
-$projectDir = OEGlobalsBag::getInstance()->getProjectDir();
-$classLoader = new ModulesClassLoader($projectDir);
+/** @var \OpenEMR\Core\ModulesClassLoader $classLoader */
 $classLoader->registerNamespaceIfNotExists(
     'OpenEMR\\Modules\\ClinicalCopilot\\',
     __DIR__ . DIRECTORY_SEPARATOR . 'src'
 );
 
-$dispatcher = OEGlobalsBag::getInstance()->getKernel()->getEventDispatcher();
+$dispatcher = $GLOBALS['kernel']->getEventDispatcher();
 (new Bootstrap($dispatcher))->subscribeToEvents();

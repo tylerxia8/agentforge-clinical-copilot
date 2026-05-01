@@ -2,8 +2,7 @@
 
 namespace OpenEMR\Modules\ClinicalCopilot;
 
-use OpenEMR\BC\ServiceContainer;
-use OpenEMR\Core\OEGlobalsBag;
+use OpenEMR\Common\Logging\SystemLogger;
 use OpenEMR\Events\PatientDemographics\RenderEvent;
 use OpenEMR\Events\PatientDemographics\ViewEvent;
 use OpenEMR\Modules\ClinicalCopilot\Listeners\PatientViewedListener;
@@ -19,6 +18,11 @@ use Symfony\Component\EventDispatcher\EventDispatcherInterface;
  *   - RenderEvent::EVENT_RENDER_POST_PAGELOAD — fires after the
  *     patient demographics page has rendered. We use this to inject
  *     the chat panel HTML and JS without forking demographics.php.
+ *
+ * Reads from $GLOBALS directly (compatible with OpenEMR 7.0.3, which
+ * doesn't ship the OEGlobalsBag wrapper or BC\ServiceContainer that
+ * 8.x-master uses). The module loader pre-populates $GLOBALS['webroot']
+ * and $GLOBALS['kernel'] before openemr.bootstrap.php runs.
  */
 class Bootstrap
 {
@@ -31,8 +35,9 @@ class Bootstrap
     public function __construct(
         private readonly EventDispatcherInterface $dispatcher
     ) {
-        $this->installPath = OEGlobalsBag::getInstance()->getWebRoot() . self::MODULE_INSTALLATION_PATH;
-        $this->listener = new PatientViewedListener($this->installPath, ServiceContainer::getLogger());
+        $webRoot = (string) ($GLOBALS['webroot'] ?? '');
+        $this->installPath = $webRoot . self::MODULE_INSTALLATION_PATH;
+        $this->listener = new PatientViewedListener($this->installPath, new SystemLogger());
     }
 
     public function subscribeToEvents(): void
@@ -56,7 +61,8 @@ class Bootstrap
 
     private function isEnabled(): bool
     {
-        $globals = OEGlobalsBag::getInstance();
-        return (bool) ($globals->get('copilot_enabled') ?? true);
+        // Default to true — the global is created by Module Manager on
+        // install but won't exist until then.
+        return (bool) ($GLOBALS['copilot_enabled'] ?? true);
     }
 }

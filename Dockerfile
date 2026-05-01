@@ -45,6 +45,17 @@ COPY docker-entrypoint-wrapper.sh /docker-entrypoint-wrapper.sh
 RUN chmod +x /docker-entrypoint-wrapper.sh
 ENTRYPOINT ["/docker-entrypoint-wrapper.sh"]
 
+# Bake the AgentForge Clinical Co-Pilot module into the image. After
+# install via the OpenEMR Module Manager UI, this renders the chat
+# panel into the patient chart. The module talks to the agent service
+# at the URL set in `Globals → copilot_agent_url`.
+#
+# Permissions: OpenEMR runs as the `apache` user; we chown so the
+# Module Manager can write to its own directory (it touches some
+# generated files during install).
+COPY --chown=apache:apache interface/modules/custom_modules/oe-module-clinical-copilot \
+     /var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-clinical-copilot
+
 # Apache listens here in the upstream image; Railway maps PORT → this.
 EXPOSE 80
 

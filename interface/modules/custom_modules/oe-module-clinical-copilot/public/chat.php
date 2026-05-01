@@ -17,10 +17,9 @@
 // service container, and asserts the user is authenticated.
 require_once __DIR__ . '/../../../../globals.php';
 
-use OpenEMR\BC\ServiceContainer;
 use OpenEMR\Common\Acl\AclMain;
 use OpenEMR\Common\Csrf\CsrfUtils;
-use OpenEMR\Core\OEGlobalsBag;
+use OpenEMR\Common\Logging\SystemLogger;
 use OpenEMR\Modules\ClinicalCopilot\Auth\AgentTokenMinter;
 use OpenEMR\Modules\ClinicalCopilot\Http\CopilotController;
 use OpenEMR\Modules\ClinicalCopilot\Services\AgentClient;
@@ -53,12 +52,11 @@ if (!is_array($body)) {
 }
 
 // 4. Wire up dependencies and dispatch.
-$globals = OEGlobalsBag::getInstance();
-$logger = ServiceContainer::getLogger();
+$logger = new SystemLogger();
 try {
-    $minter = new AgentTokenMinter((string) ($globals->get('copilot_agent_shared_secret') ?? ''));
+    $minter = new AgentTokenMinter((string) ($GLOBALS['copilot_agent_shared_secret'] ?? ''));
     $client = new AgentClient(
-        (string) ($globals->get('copilot_agent_url') ?? 'http://agent-service:8000'),
+        (string) ($GLOBALS['copilot_agent_url'] ?? 'http://agent-service:8000'),
         $minter,
         $logger,
     );
