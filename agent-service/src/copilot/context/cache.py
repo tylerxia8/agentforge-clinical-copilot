@@ -56,6 +56,7 @@ class ContextCache:
         import asyncio
 
         from copilot.tools.allergies import GetAllergiesTool
+        from copilot.tools.encounters import GetRecentEncountersTool
         from copilot.tools.medications import GetActiveMedicationsTool
         from copilot.tools.problems import GetActiveProblemsTool
 
@@ -63,14 +64,16 @@ class ContextCache:
         meds_task = GetActiveMedicationsTool().run(ctx, args)
         problems_task = GetActiveProblemsTool().run(ctx, args)
         allergies_task = GetAllergiesTool().run(ctx, args)
+        encounters_task = GetRecentEncountersTool().run(ctx, {**args, "limit": 5})
 
         results = await asyncio.gather(
-            meds_task, problems_task, allergies_task,
+            meds_task, problems_task, allergies_task, encounters_task,
             return_exceptions=True,
         )
 
         bundle: dict[str, Any] = {"patient_uuid": ctx.patient_uuid}
-        for key, result in zip(("medications", "problems", "allergies"), results, strict=True):
+        keys = ("medications", "problems", "allergies", "encounters")
+        for key, result in zip(keys, results, strict=True):
             if isinstance(result, Exception):
                 logger.warning("warm: %s failed: %s", key, result)
                 bundle[key] = {"rows": [], "warnings": [f"{key} fetch failed: {result}"]}
@@ -79,11 +82,13 @@ class ContextCache:
 
         await self.put(ctx.patient_uuid, bundle)
         logger.info(
-            "warmed context for patient_uuid=%s (meds=%d, problems=%d, allergies=%d)",
+            "warmed context for patient_uuid=%s "
+            "(meds=%d, problems=%d, allergies=%d, encounters=%d)",
             ctx.patient_uuid,
             len(bundle["medications"]["rows"]),
             len(bundle["problems"]["rows"]),
             len(bundle["allergies"]["rows"]),
+            len(bundle["encounters"]["rows"]),
         )
 
     async def get_or_warm(self, ctx: PatientContext) -> dict[str, Any]:

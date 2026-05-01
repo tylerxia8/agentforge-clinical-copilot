@@ -21,6 +21,7 @@ pattern, just hitting a different REST endpoint):
 
 from copilot.tools.allergies import GetAllergiesTool
 from copilot.tools.base import Tool, ToolResult
+from copilot.tools.encounters import GetRecentEncountersTool
 from copilot.tools.medications import GetActiveMedicationsTool
 from copilot.tools.problems import GetActiveProblemsTool
 
@@ -28,9 +29,12 @@ ALL_TOOLS: list[Tool] = [
     GetActiveMedicationsTool(),
     GetActiveProblemsTool(),
     GetAllergiesTool(),
+    GetRecentEncountersTool(),
     # Add others here as they're implemented:
-    # GetRecentEncountersTool, GetVitalHistoryTool, GetLabHistoryTool,
-    # GetImmunizationsTool, GetTodayScheduleTool.
+    # GetVitalHistoryTool — blocked: /Observation 500s on seeded
+    #   form_vitals, FHIR mapping issue to diagnose locally.
+    # GetLabHistoryTool — same /Observation issue.
+    # GetImmunizationsTool, GetTodayScheduleTool — Sunday stretch.
 ]
 
 
