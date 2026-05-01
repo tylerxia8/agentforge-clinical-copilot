@@ -83,44 +83,48 @@ aside h2 {
   margin: 0 0 12px;
 }
 
-.patient-card {
+.patient-select {
+  width: 100%;
+  padding: 10px 32px 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  background: var(--panel);
+  color: var(--text);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%2357606a' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
   cursor: pointer;
-  transition: border-color 0.1s, background 0.1s;
-  user-select: none;
 }
 
-.patient-card:hover {
+.patient-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
   border-color: var(--accent);
 }
 
-.patient-card.active {
-  border-color: var(--accent);
-  background: #e7f1ff;
-}
-
-.patient-card.rich {
-  border-color: #1a7f37;
+.patient-details {
+  margin-top: 10px;
+  border: 1px solid #1a7f37;
   background: #f0fdf4;
+  border-radius: 8px;
+  padding: 12px;
 }
 
-.patient-card.rich.active {
-  border-color: #0d6e2a;
-  background: #dcfce7;
-}
-
-.patient-card .name {
+.patient-details .name {
   font-weight: 600;
   font-size: 14px;
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-bottom: 4px;
 }
 
-.patient-card .badge {
+.patient-details .badge {
   font-size: 10px;
   font-weight: 500;
   background: #dcfce7;
@@ -132,8 +136,20 @@ aside h2 {
   letter-spacing: 0.3px;
 }
 
-.patient-card .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.patient-card .uuid { font-family: var(--code-font); font-size: 11px; color: var(--muted); margin-top: 4px; }
+.patient-details .summary {
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.4;
+  margin-top: 6px;
+}
+
+.patient-details .uuid {
+  font-family: var(--code-font);
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 8px;
+  word-break: break-all;
+}
 
 .suggestions {
   margin-top: 24px;
@@ -325,8 +341,11 @@ a:hover { text-decoration: underline; }
 
   <aside>
     <h2>Open chart</h2>
-    <div id="patient-list">
+    <select id="patient-select" class="patient-select" aria-label="Open patient chart">
       <!-- populated by JS -->
+    </select>
+    <div id="patient-details" class="patient-details" hidden>
+      <!-- populated by JS on selection -->
     </div>
 
     <div class="suggestions">
@@ -416,7 +435,8 @@ const state = {
   pending: false,
 };
 
-const list = document.getElementById("patient-list");
+const select = document.getElementById("patient-select");
+const details = document.getElementById("patient-details");
 const transcript = document.getElementById("transcript");
 const empty = document.getElementById("empty");
 const form = document.getElementById("composer");
@@ -424,31 +444,39 @@ const input = document.getElementById("msg");
 const sendBtn = document.getElementById("send");
 
 PATIENTS.forEach((p, i) => {
-  const card = document.createElement("div");
-  card.className = "patient-card" + (p.rich ? " rich" : "");
-  const badge = p.rich ? '<span class="badge">rich chart</span>' : "";
-  card.innerHTML = `
-    <div class="name">${p.name}${badge}</div>
-    <div class="meta">${p.note}</div>
-    <div class="uuid">${p.uuid.substring(0, 8)}…</div>
-  `;
-  card.addEventListener("click", () => selectPatient(i));
-  list.appendChild(card);
+  const opt = document.createElement("option");
+  opt.value = String(i);
+  opt.textContent = `${p.name} · ${p.note}`;
+  select.appendChild(opt);
+});
+
+select.addEventListener("change", (ev) => {
+  selectPatient(parseInt(ev.target.value, 10));
 });
 
 function selectPatient(idx) {
   state.patient = PATIENTS[idx];
   state.history = [];
-  document.querySelectorAll(".patient-card").forEach((el, i) =>
-    el.classList.toggle("active", i === idx),
-  );
+  select.value = String(idx);
+
+  // Render the details card so the demo viewer sees the selected
+  // patient's full clinical summary and UUID at a glance.
+  const badge = state.patient.rich ? '<span class="badge">rich chart</span>' : "";
+  details.innerHTML = `
+    <div class="name">${state.patient.name}${badge}</div>
+    <div class="summary">${state.patient.note}</div>
+    <div class="uuid">${state.patient.uuid}</div>
+  `;
+  details.hidden = false;
+
   transcript.innerHTML = "";
   const banner = document.createElement("div");
   banner.style.color = "var(--muted)";
   banner.style.fontSize = "13px";
   banner.style.padding = "12px 0";
-  banner.innerHTML = `Open chart: <strong>${state.patient.name}</strong> · UUID <code>${state.patient.uuid}</code>`;
+  banner.innerHTML = `Open chart: <strong>${state.patient.name}</strong>`;
   transcript.appendChild(banner);
+
   input.disabled = false;
   sendBtn.disabled = false;
   input.focus();
