@@ -388,25 +388,26 @@ a:hover { text-decoration: underline; }
 
 <script>
 // All 14 demo patients from sql/example_patient_data.sql, surfaced
-// from live FHIR via their UUIDs. Farrah is the only one currently
-// seeded with clinical data (medications, problems, allergies,
-// encounters) — the `rich` flag highlights that visually so the
-// demo viewer knows which card to click for the UC-1 snapshot.
+// from live FHIR via their UUIDs. Each one seeded with a realistic
+// clinical profile — varied conditions, age-appropriate medications,
+// plausible drug-allergy combinations — by sql/agentforge_demo_seed.sql.
+// Notes are short clinical summaries to help demo viewers pick a chart
+// that exercises the question they want to demo.
 const PATIENTS = [
-  { uuid: "a1ab5594-20c8-4363-be30-75d287be735d", name: "Farrah Rolle",   note: "F · DOB 1973-10-11 · 2 meds · 2 problems · 1 allergy · 2 visits", rich: true },
-  { uuid: "a1ab5594-20a2-4c30-b8d0-f7a153422786", name: "Ted Shaw",       note: "M · DOB 1947-03-11 · empty chart" },
-  { uuid: "a1ab5594-20c6-40ec-b85b-7dd2c4c728ca", name: "Eduardo Perez",  note: "M · DOB 1957-01-09 · empty chart" },
-  { uuid: "a1ab5594-20ca-424c-88ff-0856c00ba55a", name: "Nora Cohen",     note: "F · DOB 1967-06-04 · empty chart" },
-  { uuid: "a1ab5594-20cb-4747-bc61-ad97be03e203", name: "Jim Moses",      note: "M · DOB 1945-02-14 · empty chart" },
-  { uuid: "a1ab5594-20cc-4b4c-8e09-811bbadc90df", name: "Richard Jones",  note: "DOB 1940-12-16 · empty chart" },
-  { uuid: "a1ab5594-20ce-4831-822f-3ef3ba4eab31", name: "Ilias Jenane",   note: "F · DOB 1933-03-22 · empty chart" },
-  { uuid: "a1ab5594-20cf-402e-a49f-a177692ec60b", name: "John Dockerty",  note: "DOB 1977-05-02 · empty chart" },
-  { uuid: "a1ab5594-20d0-4a73-b63b-1a099b4d3caa", name: "James Janssen",  note: "M · DOB 1966-04-28 · empty chart" },
-  { uuid: "a1ab5594-20d2-485c-8de8-93555fbc3305", name: "Jason Binder",   note: "M · DOB 1961-12-11 · empty chart" },
-  { uuid: "a1ab5594-20d3-4468-a906-2d2d923d454b", name: "Robert Dickey",  note: "DOB 1955-04-12 · empty chart" },
-  { uuid: "a1ab5594-20d4-409b-bb4e-8730c7986ce3", name: "Jillian Mahoney", note: "F · DOB 1968-08-11 · empty chart" },
-  { uuid: "a1ab5594-20d5-4bdb-ac76-cf300ab30440", name: "Wallace Buckley", note: "DOB 1952-04-03 · empty chart" },
-  { uuid: "a1ab5594-20d7-439d-9817-498680946141", name: "Brent Perez",    note: "M · DOB 1960-01-01 · empty chart" },
+  { uuid: "a1ab5594-20c8-4363-be30-75d287be735d", name: "Farrah Rolle",   note: "F · 52 · HTN + T2DM · 2 meds · 1 allergy", rich: true },
+  { uuid: "a1ab5594-20a2-4c30-b8d0-f7a153422786", name: "Ted Shaw",       note: "M · 79 · BPH + HTN + ↑lipids · 4 meds · NKDA", rich: true },
+  { uuid: "a1ab5594-20c6-40ec-b85b-7dd2c4c728ca", name: "Eduardo Perez",  note: "M · 69 · T2DM + CAD · 4 meds · sulfa allergy", rich: true },
+  { uuid: "a1ab5594-20ca-424c-88ff-0856c00ba55a", name: "Nora Cohen",     note: "F · 58 · hypothyroid + osteopenia · 3 meds · latex", rich: true },
+  { uuid: "a1ab5594-20cb-4747-bc61-ad97be03e203", name: "Jim Moses",      note: "M · 81 · afib + CHF + HTN · 4 meds · contrast allergy", rich: true },
+  { uuid: "a1ab5594-20cc-4b4c-8e09-811bbadc90df", name: "Richard Jones",  note: "86 · COPD + GERD · 3 meds · penicillin allergy", rich: true },
+  { uuid: "a1ab5594-20ce-4831-822f-3ef3ba4eab31", name: "Ilias Jenane",   note: "F · 92 · Alzheimer's + HTN · 3 meds · NKDA", rich: true },
+  { uuid: "a1ab5594-20cf-402e-a49f-a177692ec60b", name: "John Dockerty",  note: "49 · GAD + MDD · 2 meds · NKDA", rich: true },
+  { uuid: "a1ab5594-20d0-4a73-b63b-1a099b4d3caa", name: "James Janssen",  note: "M · 60 · HTN + pre-DM · 3 meds · NKDA", rich: true },
+  { uuid: "a1ab5594-20d2-485c-8de8-93555fbc3305", name: "Jason Binder",   note: "M · 64 · post-CVA + HTN · 3 meds · NKDA", rich: true },
+  { uuid: "a1ab5594-20d3-4468-a906-2d2d923d454b", name: "Robert Dickey",  note: "70 · CKD-3 + HTN · 3 meds · NSAID allergy", rich: true },
+  { uuid: "a1ab5594-20d4-409b-bb4e-8730c7986ce3", name: "Jillian Mahoney", note: "F · 57 · asthma + rhinitis · 3 meds · penicillin", rich: true },
+  { uuid: "a1ab5594-20d5-4bdb-ac76-cf300ab30440", name: "Wallace Buckley", note: "73 · Parkinson's · 2 meds · NKDA", rich: true },
+  { uuid: "a1ab5594-20d7-439d-9817-498680946141", name: "Brent Perez",    note: "M · 65 · T2DM with neuropathy · 4 meds · NKDA", rich: true },
 ];
 
 const state = {
