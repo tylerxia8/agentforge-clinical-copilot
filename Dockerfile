@@ -45,16 +45,19 @@ COPY docker-entrypoint-wrapper.sh /docker-entrypoint-wrapper.sh
 RUN chmod +x /docker-entrypoint-wrapper.sh
 ENTRYPOINT ["/docker-entrypoint-wrapper.sh"]
 
-# Bake the AgentForge Clinical Co-Pilot module into the image. After
-# install via the OpenEMR Module Manager UI, this renders the chat
-# panel into the patient chart. The module talks to the agent service
-# at the URL set in `Globals → copilot_agent_url`.
+# Module COPY temporarily disabled — the deploy with the module baked
+# in stalled past the 15-min healthcheck window. Unclear yet whether
+# it's the COPY itself, the module's bootstrap auto-loading, or just
+# image-pull time on Railway's edge. Diagnosing in the next iteration:
+# revert to known-good base, confirm boot, then re-add COPY with a
+# minimal stub to isolate.
 #
-# Permissions: OpenEMR runs as the `apache` user; we chown so the
-# Module Manager can write to its own directory (it touches some
-# generated files during install).
-COPY --chown=apache:apache interface/modules/custom_modules/oe-module-clinical-copilot \
-     /var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-clinical-copilot
+# Sunday's "deployed embedded chat panel" goal goes through the
+# standalone /demo UI on the agent service for now. The OpenEMR
+# module source ships in the repo and works on local docker-compose.
+#
+# COPY --chown=apache:apache interface/modules/custom_modules/oe-module-clinical-copilot \
+#      /var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-clinical-copilot
 
 # Apache listens here in the upstream image; Railway maps PORT → this.
 EXPOSE 80
