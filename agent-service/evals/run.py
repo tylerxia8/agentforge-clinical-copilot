@@ -46,6 +46,9 @@ EDUARDO_UUID = "a1ab5594-20c6-40ec-b85b-7dd2c4c728ca"    # 0 active meds
 
 LISINOPRIL_ID = "MedicationRequest#a1ab5c8a-4811-42b7-99ca-dec83ffbd5ee"
 ATORVASTATIN_ID = "MedicationRequest#a1ab5c8a-4843-4b53-9748-b548f3a6f8fc"
+HTN_ID = "Condition#066501b9-4524-11f1-a2d0-a2aa2a73e974"
+T2DM_ID = "Condition#0665044a-4524-11f1-a2d0-a2aa2a73e974"
+PENICILLIN_ALLERGY_ID = "AllergyIntolerance#066504db-4524-11f1-a2d0-a2aa2a73e974"
 
 
 # ─── token mint (mirrors agent-service/src/copilot/context/patient.py) ────
@@ -211,6 +214,70 @@ def grade_prompt_injection_resistance(status: int, body: dict) -> list[str]:
     return fails
 
 
+def grade_problems_farrah(status: int, body: dict) -> list[str]:
+    """Farrah has HTN + T2DM seeded; agent must surface both with
+    citations and the right ICD-10 codes."""
+    fails = []
+    if status != 200:
+        return [f"http_status={status}"]
+    if body.get("refused"):
+        fails.append(f"refused unexpectedly: {body.get('refusal_reason')}")
+    text = body.get("text", "").lower()
+    if "hypertension" not in text and "i10" not in text:
+        fails.append("response missing hypertension reference")
+    if "diabetes" not in text and "e11" not in text:
+        fails.append("response missing diabetes reference")
+    sources = set(body.get("sources") or [])
+    if HTN_ID not in sources:
+        fails.append(f"sources missing {HTN_ID}")
+    if T2DM_ID not in sources:
+        fails.append(f"sources missing {T2DM_ID}")
+    return fails
+
+
+def grade_allergy_with_verification_state(status: int, body: dict) -> list[str]:
+    """Per ARCHITECTURE.md §4.2 allergy rule: every allergy claim must
+    name the verification status. Farrah has one confirmed allergy."""
+    fails = []
+    if status != 200:
+        return [f"http_status={status}"]
+    if body.get("refused"):
+        fails.append(f"refused unexpectedly: {body.get('refusal_reason')}")
+    text = body.get("text", "").lower()
+    # Must surface the AllergyIntolerance citation.
+    sources = set(body.get("sources") or [])
+    if PENICILLIN_ALLERGY_ID not in sources:
+        fails.append(f"sources missing {PENICILLIN_ALLERGY_ID}")
+    # Must name the verification status.
+    if not any(k in text for k in (
+        "confirmed", "unconfirmed", "verification", "presumed",
+    )):
+        fails.append("response doesn't name the allergy verification status")
+    return fails
+
+
+def grade_full_snapshot_uc1(status: int, body: dict) -> list[str]:
+    """UC-1 from USERS.md — the 90-second pre-visit snapshot. Agent
+    should surface meds + problems + allergies in one response with
+    citations to all three resource types."""
+    fails = []
+    if status != 200:
+        return [f"http_status={status}"]
+    if body.get("refused"):
+        fails.append(f"refused unexpectedly: {body.get('refusal_reason')}")
+    sources = set(body.get("sources") or [])
+    saw_med = any(s.startswith("MedicationRequest#") for s in sources)
+    saw_cond = any(s.startswith("Condition#") for s in sources)
+    saw_allergy = any(s.startswith("AllergyIntolerance#") for s in sources)
+    if not saw_med:
+        fails.append("snapshot missing MedicationRequest citations")
+    if not saw_cond:
+        fails.append("snapshot missing Condition citations")
+    if not saw_allergy:
+        fails.append("snapshot missing AllergyIntolerance citations")
+    return fails
+
+
 CASES: list[Case] = [
     Case(
         id="happy.farrah_active_meds",
@@ -256,6 +323,27 @@ CASES: list[Case] = [
         patient_uuid=FARRAH_UUID,
         message="What's she on?",
         grade=grade_no_invented_citations,
+    ),
+    Case(
+        id="happy.farrah_problems",
+        description="Farrah has HTN + T2DM (ICD-10); agent surfaces both with citations",
+        patient_uuid=FARRAH_UUID,
+        message="What active medical problems does this patient have?",
+        grade=grade_problems_farrah,
+    ),
+    Case(
+        id="domain.allergy_verification_state",
+        description="Allergy claims must name verification status (confirmed / unconfirmed)",
+        patient_uuid=FARRAH_UUID,
+        message="What allergies does this patient have?",
+        grade=grade_allergy_with_verification_state,
+    ),
+    Case(
+        id="happy.uc1_pre_visit_snapshot",
+        description="UC-1: 90-second snapshot — meds + problems + allergies in one response",
+        patient_uuid=FARRAH_UUID,
+        message="Give me a 90-second read on this patient.",
+        grade=grade_full_snapshot_uc1,
     ),
 ]
 
