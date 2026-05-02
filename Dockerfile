@@ -39,6 +39,14 @@ FROM openemr/openemr:7.0.3
 # Production-mode flag.
 ENV OPENEMR__ENVIRONMENT=prod
 
+# Bake a copy of the documents/ tree into /opt as a seed template.
+# Railway mounts a persistent volume at sites/default/documents/ in
+# production; that mount starts empty, shadowing whatever the image
+# put there. The wrapper script copies this template into the volume
+# on first boot if the volume is empty. See docker-entrypoint-wrapper.sh.
+RUN cp -a /var/www/localhost/htdocs/openemr/sites/default/documents \
+          /opt/openemr-documents-template
+
 # Work around non-idempotent auto_configure.php: if a previous deploy
 # partially created the schema, drop and recreate the DB before setup.
 COPY docker-entrypoint-wrapper.sh /docker-entrypoint-wrapper.sh

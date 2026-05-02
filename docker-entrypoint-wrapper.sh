@@ -1,6 +1,30 @@
 #!/bin/sh
 set -e
 
+# Seed the documents/ Railway volume on first boot.
+#
+# We mount a Railway volume at sites/default/documents/ so the OAuth
+# drive key + RSA keypair survive container restarts (otherwise every
+# redeploy regenerates them, leaving the DB-stored encrypted state
+# undecryptable). But Railway volumes start empty, shadowing whatever
+# the image baked into that path — so OpenEMR can't find its
+# methods/, certificates/, customer_logos/, etc. directories on first
+# boot.
+#
+# Fix: at image build time we copy the upstream documents/ directory
+# tree to /opt/openemr-documents-template (see Dockerfile). On first
+# boot, if the volume is empty (no methods/ subdir present), we copy
+# the template into it and fix ownership for apache. Subsequent boots
+# see an initialized volume and skip the seed.
+DOCS=/var/www/localhost/htdocs/openemr/sites/default/documents
+TPL=/opt/openemr-documents-template
+if [ -d "$TPL" ] && [ ! -d "$DOCS/logs_and_misc/methods" ]; then
+  echo "[entrypoint-wrapper] Seeding empty documents/ volume from template..."
+  cp -a "$TPL/." "$DOCS/"
+  chown -R apache:apache "$DOCS"
+  echo "[entrypoint-wrapper] Volume seeded; $(find "$DOCS" -mindepth 1 -maxdepth 1 -type d | wc -l) top-level dirs."
+fi
+
 # If MYSQL_HOST is set and the database exists but has partial schema
 # from a previous failed setup, drop and recreate it so
 # auto_configure.php can run cleanly.
