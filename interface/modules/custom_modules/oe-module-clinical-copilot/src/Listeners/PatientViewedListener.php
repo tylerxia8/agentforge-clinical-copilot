@@ -62,6 +62,16 @@ final class PatientViewedListener
         // CSRF token the panel will include on every chat POST.
         $csrf = CsrfUtils::collectCsrfToken();
         $endpoint = $this->installPath . '/public/chat.php';
+        $patientName = $this->lookupPatientName($pid);
+
+        // Default starter prompts the doctor can click instead of typing.
+        // Mirrors the standalone demo UI (UC-1 / UC-2 / UC-3 categories).
+        $suggestions = [
+            ['Quick read on this patient', 'Quick read on this patient.'],
+            ['Active medications', 'What active medications is this patient on?'],
+            ['Med ↔ problem reconciliation', 'Are her medications consistent with her active problem list? Flag any mismatches.'],
+            ['Allergies', 'What allergies does this patient have? Include verification status.'],
+        ];
 
         // Render the panel container + a small launcher script. The
         // heavy JS lives in public/js/copilot-chat.js.
@@ -70,12 +80,25 @@ final class PatientViewedListener
         <div id="copilot-panel" data-endpoint="<?= htmlspecialchars($endpoint, ENT_QUOTES) ?>"
              data-csrf="<?= htmlspecialchars($csrf, ENT_QUOTES) ?>"
              data-patient-pid="<?= htmlspecialchars((string) $pid, ENT_QUOTES) ?>"
+             data-patient-name="<?= htmlspecialchars($patientName, ENT_QUOTES) ?>"
              aria-label="Clinical Co-Pilot">
             <header class="copilot-header">
-                <span class="copilot-title">Clinical Co-Pilot</span>
+                <span class="copilot-title">
+                    Clinical Co-Pilot
+                    <?php if ($patientName !== '') { ?>
+                        <span class="copilot-patient">for <?= htmlspecialchars($patientName, ENT_QUOTES) ?></span>
+                    <?php } ?>
+                </span>
                 <button type="button" class="copilot-close" aria-label="Minimize">−</button>
             </header>
-            <div class="copilot-messages" id="copilot-messages" role="log" aria-live="polite"></div>
+            <div class="copilot-messages" id="copilot-messages" role="log" aria-live="polite">
+                <div id="copilot-suggestions" class="copilot-suggestions">
+                    <div class="copilot-suggestions-label">Try asking</div>
+                    <?php foreach ($suggestions as [$label, $query]) { ?>
+                        <button type="button" data-q="<?= htmlspecialchars($query, ENT_QUOTES) ?>"><?= htmlspecialchars($label, ENT_QUOTES) ?></button>
+                    <?php } ?>
+                </div>
+            </div>
             <form class="copilot-input-row" id="copilot-form" autocomplete="off">
                 <input
                     type="text"
@@ -88,6 +111,16 @@ final class PatientViewedListener
         </div>
         <script src="<?= htmlspecialchars($this->installPath . '/public/js/copilot-chat.js', ENT_QUOTES) ?>" defer></script>
         <?php
+    }
+
+    private function lookupPatientName(int $pid): string
+    {
+        $row = sqlQuery('SELECT fname, lname FROM patient_data WHERE pid = ?', [$pid]);
+        if (!is_array($row)) {
+            return '';
+        }
+        $parts = array_filter([trim((string) ($row['fname'] ?? '')), trim((string) ($row['lname'] ?? ''))]);
+        return implode(' ', $parts);
     }
 
     private function buildClient(): ?AgentClient
