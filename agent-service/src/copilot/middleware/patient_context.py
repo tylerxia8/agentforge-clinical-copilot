@@ -83,6 +83,22 @@ def enforce_tool_result(ctx: PatientContext, tool: Tool, result: ToolResult) -> 
             "dropped %d cross-patient rows: tool=%s open_chart=%s user=%s",
             dropped, tool.name, ctx.patient_uuid, ctx.user_id,
         )
-        # TODO(thursday): emit a metric so we can alert on discrepancy_rate > 0.
+        # Emit to Langfuse so the discrepancy rate is queryable in the
+        # observability layer, not just buried in container logs.
+        try:
+            from copilot.observability import langfuse_client
+            if langfuse_client is not None:
+                langfuse_client.create_event(
+                    name="copilot.cross_patient_drop",
+                    metadata={
+                        "tool": tool.name,
+                        "dropped_rows": dropped,
+                        "user_id": ctx.user_id,
+                        "patient_uuid": ctx.patient_uuid,
+                    },
+                    level="ERROR",
+                )
+        except Exception:  # noqa: BLE001 — observability failure must never break a request
+            logger.debug("langfuse event emission failed", exc_info=True)
 
     return result.model_copy(update={"rows": kept})

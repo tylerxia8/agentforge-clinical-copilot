@@ -18,12 +18,17 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from copilot.context.cache import ContextCache
 from copilot.context.patient import PatientContext, verify_agent_token
+from copilot.middleware.rate_limit import (
+    RateLimitExceeded,
+    chat_concurrency_slot,
+    check_ip_quota,
+)
 from copilot.orchestrator import Orchestrator, ChatResponse
 from copilot.settings import settings
 
@@ -59,13 +64,37 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _client_ip(request: Request) -> str:
+    # X-Forwarded-For when behind Railway's edge; .client.host otherwise.
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",", 1)[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _rate_limit_response(exc: RateLimitExceeded) -> HTTPException:
+    return HTTPException(
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=exc.reason,
+        headers={"Retry-After": str(exc.retry_after_seconds)},
+    )
+
+
 @app.post("/agent/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
+    request: Request,
     ctx: PatientContext = Depends(_ctx_from_token),
 ) -> ChatResponse:
-    orchestrator = Orchestrator()
-    return await orchestrator.run_turn(ctx=ctx, message=body.message, history=body.history)
+    try:
+        await check_ip_quota(_client_ip(request))
+        async with chat_concurrency_slot():
+            orchestrator = Orchestrator()
+            return await orchestrator.run_turn(
+                ctx=ctx, message=body.message, history=body.history
+            )
+    except RateLimitExceeded as exc:
+        raise _rate_limit_response(exc) from exc
 
 
 @app.post("/agent/warm/{patient_uuid}", status_code=status.HTTP_202_ACCEPTED)
@@ -100,7 +129,7 @@ async def demo_index() -> FileResponse | HTMLResponse:
 
 
 @app.post("/demo/chat", response_model=ChatResponse)
-async def demo_chat(body: DemoChatRequest) -> ChatResponse:
+async def demo_chat(body: DemoChatRequest, request: Request) -> ChatResponse:
     """Demo endpoint that mints a PatientContext server-side instead of
     requiring a pre-minted HMAC token. Same orchestrator, same middleware,
     same verification — just skipping the token-verify step that the
@@ -110,12 +139,19 @@ async def demo_chat(body: DemoChatRequest) -> ChatResponse:
     """
     if not settings.demo_mode_enabled:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
-    ctx = PatientContext(
-        user_id=0,
-        patient_uuid=body.patient_uuid,
-        encounter_uuid=None,
-        issued_at=int(time.time()),
-        nonce=secrets.token_hex(8),
-    )
-    orchestrator = Orchestrator()
-    return await orchestrator.run_turn(ctx=ctx, message=body.message, history=body.history)
+    try:
+        await check_ip_quota(_client_ip(request))
+        async with chat_concurrency_slot():
+            ctx = PatientContext(
+                user_id=0,
+                patient_uuid=body.patient_uuid,
+                encounter_uuid=None,
+                issued_at=int(time.time()),
+                nonce=secrets.token_hex(8),
+            )
+            orchestrator = Orchestrator()
+            return await orchestrator.run_turn(
+                ctx=ctx, message=body.message, history=body.history
+            )
+    except RateLimitExceeded as exc:
+        raise _rate_limit_response(exc) from exc

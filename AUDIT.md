@@ -149,7 +149,22 @@ left to the integrator."
   not enforced at install. **Action:** Railway deployment config will
   inject DB credentials via env vars; sqlconf.php must be templated,
   not committed with real values.
-- OAuth2 keys: well-handled (above).
+- OAuth2 keys: well-handled by upstream code, **but split-storage
+  trap**. The drive-level key (`sites/default/documents/logs_and_misc/methods/sixa,sixb`)
+  and the OAuth2 RSA keypair (`sites/default/documents/certificates/oa{private,public}.key`)
+  live on the filesystem; their counterparts (raw key in `keys` table,
+  passphrase in `keys.oauth2passphrase`, encrypted client secrets in
+  `oauth_clients`) live in the DB. On any container redeploy that
+  reset the filesystem, OpenEMR's `OAuth2KeyConfig::verifyKeys()`
+  silently regenerates the on-disk halves but cannot insert the new
+  DB rows (duplicate-key error against the old ones), leaving the
+  store inconsistent. Result: every encryption op throws
+  `CryptoGenException: Key in drive is not compatible with key in
+  database — Exiting`. **Mitigation in this deployment:** Railway
+  persistent volume mounted at `sites/default/documents/`, seeded on
+  first boot from a baked template (`/opt/openemr-documents-template`);
+  see `Dockerfile` and `docker-entrypoint-wrapper.sh`. ARCHITECTURE
+  §11 (Sunday) tracks completion.
 - No code-level key rotation mechanism for DB credentials, OAuth2
   keys, or the audit-log encryption key.
 

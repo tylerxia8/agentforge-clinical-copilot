@@ -709,6 +709,22 @@ strategy at 10K is the architectural inflection point, not the
 - Failure-mode handling per §7 hardened.
 - AI cost analysis at 100 / 1K / 10K / 100K scale.
 - Demo video; social post.
+- [x] **Persistent volume on `sites/default/documents/`** for the
+  OAuth drive key and RSA keypair, so a redeploy doesn't invalidate
+  every encrypted row in `oauth_clients`. Implemented via Railway
+  volume + `Dockerfile`-baked template that the entrypoint wrapper
+  seeds on first boot. Without this every `railway redeploy` of the
+  OpenEMR service caused `CryptoGenException` and 500s on
+  `/oauth2/default/token`.
+- [x] **Embedded panel UI polish**: markdown rendering, citation
+  chips (collapsed by resource type), patient name in header,
+  starter prompt buttons, refusal vs error visual distinction.
+- [x] **Rate limiting**: per-IP rolling-minute cap + global
+  concurrency semaphore on `/agent/chat` and `/demo/chat` to keep
+  bursts under Anthropic's 30K-tokens-per-minute org limit.
+- [x] **Container health probe**: agent-service `Dockerfile`
+  `HEALTHCHECK` against `/healthz`, paired with Railway's
+  `restartPolicyType: ON_FAILURE`.
 
 ---
 
