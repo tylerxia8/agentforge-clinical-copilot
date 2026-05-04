@@ -14,6 +14,10 @@ dependencies = [
     "python-dotenv>=1.0",
     # Observability — Langfuse SDK; wired up at Thursday deliverable
     "langfuse>=2.55",
+    # W2 — multimodal evidence agent. pdfplumber is the ground-truth
+    # bbox source for the citation overlay (the vision model never
+    # decides coordinates, see W2_ARCHITECTURE.md §1).
+    "pdfplumber>=0.11",
 ]
 
 [project.optional-dependencies]
