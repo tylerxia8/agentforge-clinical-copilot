@@ -174,14 +174,31 @@ try {
     exit;
 }
 
-// 9. Success. Return the extraction + the doc UUID so the panel can
-//    reference it in subsequent chat turns.
+// 9. Writeback. Persist the extracted facts as appropriate OpenEMR
+//    records (PRD §1 core requirement). Failures here are logged but
+//    do NOT fail the request — the user already has the extraction;
+//    a writeback hiccup shouldn't lose their work. The writeback
+//    summary is included in the response so the panel can show what
+//    landed in the chart.
+$writebackSummary = ['ok' => false, 'records' => []];
+try {
+    $writebackSummary = _copilot_writeback(
+        $pid, $userId, $docType, $docUuid, $origName, $size, $result['extraction'] ?? null,
+    );
+} catch (\Throwable $e) {
+    $logger->error('copilot writeback failed (non-fatal): ' . $e->getMessage());
+    $writebackSummary = ['ok' => false, 'error' => $e->getMessage(), 'records' => []];
+}
+
+// 10. Success. Return the extraction + writeback summary + the doc
+//     UUID so the panel can reference it in subsequent chat turns.
 echo json_encode([
     'ok' => true,
     'document_reference_id' => $docUuid,
     'doc_type' => $docType,
     'extraction' => $result['extraction'] ?? null,
     'bbox_match' => $result['bbox_match'] ?? null,
+    'writeback' => $writebackSummary,
 ]);
 
 
@@ -202,6 +219,263 @@ function _copilot_random_uuid(): string
         substr($hex, 16, 4),
         substr($hex, 20, 12),
     );
+}
+
+/**
+ * Persist the agent's extraction as native OpenEMR records.
+ *
+ * Three writebacks per extraction (PRD §1 "persist derived facts as
+ * appropriate FHIR resources or OpenEMR records"):
+ *
+ *   1. `pnotes` — a single Patient Notes entry with a Markdown summary
+ *      of every extracted fact, linked to the patient by pid. Visible
+ *      under Patient Notes in the chart.
+ *   2. `documents` — a row representing the source PDF, linked to
+ *      the patient. Surfaces in the patient's Documents tab. (Already
+ *      stored on the persistent volume by upload.php; this row is
+ *      what makes it visible from OpenEMR's UI.)
+ *   3. For lab_pdf only: `procedure_result` rows under a
+ *      `procedure_report` parent. Surfaces under Procedures →
+ *      Reports in the chart.
+ *
+ * Each write is wrapped in try/catch so a partial failure leaves the
+ * other records intact and surfaces a per-table error to the
+ * operator. The function NEVER throws — even a total failure returns
+ * a status object the caller can inspect.
+ *
+ * @return array{ok:bool, records: array<string,array>, error?:string}
+ */
+function _copilot_writeback(
+    int $pid,
+    int $userId,
+    string $docType,
+    string $docUuid,
+    string $origName,
+    int $size,
+    ?array $extraction,
+): array {
+    $records = [];
+
+    if ($extraction === null) {
+        return ['ok' => false, 'error' => 'no extraction to persist', 'records' => []];
+    }
+
+    // 1. pnotes — Patient Notes summary
+    try {
+        $title = sprintf('AgentForge: %s extraction', $docType === 'lab_pdf' ? 'lab report' : 'intake form');
+        $body = _copilot_format_pnote_body($docType, $docUuid, $extraction);
+        $authUser = (string) ($_SESSION['authUser'] ?? 'copilot');
+        $noteId = sqlInsert(
+            'INSERT INTO pnotes (date, body, pid, user, groupname, activity, authorized, '
+            . 'title, message_status, deleted) '
+            . 'VALUES (NOW(), ?, ?, ?, ?, 1, 1, ?, ?, 0)',
+            [$body, $pid, $authUser, 'Default', $title, 'New'],
+        );
+        $records['pnotes'] = ['ok' => true, 'id' => $noteId, 'title' => $title];
+    } catch (\Throwable $e) {
+        $records['pnotes'] = ['ok' => false, 'error' => $e->getMessage()];
+    }
+
+    // 2. documents — link the PDF to the patient's chart
+    try {
+        $docId = sqlInsert(
+            'INSERT INTO documents (type, size, date, url, mimetype, foreign_id, '
+            . 'docdate, name, hash, list_id, encounter_id, encounter_check, '
+            . 'audit_master_approval_status, audit_master_id, documentationOf, '
+            . 'encrypted, deleted) '
+            . 'VALUES (?, ?, NOW(), ?, ?, ?, NOW(), ?, ?, 0, 0, "", 1, 0, "", 0, 0)',
+            [
+                'file_url',
+                $size,
+                'file:///' . _copilot_safe_storage_path($pid, $docUuid),
+                'application/pdf',
+                $pid,
+                $origName,
+                hash('sha256', $docUuid),  // Stable per-document hash; not the file content hash
+            ],
+        );
+        $records['documents'] = ['ok' => true, 'id' => $docId];
+    } catch (\Throwable $e) {
+        $records['documents'] = ['ok' => false, 'error' => $e->getMessage()];
+    }
+
+    // 3. procedure_result (lab_pdf only)
+    if ($docType === 'lab_pdf' && !empty($extraction['results'])) {
+        try {
+            $records['procedure_results'] = _copilot_writeback_lab_results(
+                $pid, $userId, $docUuid, $extraction,
+            );
+        } catch (\Throwable $e) {
+            $records['procedure_results'] = ['ok' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    $allOk = array_reduce(
+        $records,
+        fn($carry, $r) => $carry && (($r['ok'] ?? false) === true),
+        true,
+    );
+    return ['ok' => $allOk, 'records' => $records];
+}
+
+function _copilot_safe_storage_path(int $pid, string $docUuid): string
+{
+    return $GLOBALS['OE_SITE_DIR'] . '/documents/copilot_uploads/' . $pid . '/' . $docUuid . '.pdf';
+}
+
+function _copilot_format_pnote_body(string $docType, string $docUuid, array $extraction): string
+{
+    $lines = [];
+    $lines[] = "Source DocumentReference#{$docUuid}";
+    $lines[] = '';
+
+    if ($docType === 'lab_pdf') {
+        $results = $extraction['results'] ?? [];
+        $lines[] = '## Lab Results';
+        foreach ($results as $r) {
+            $flag = ($r['abnormal_flag'] ?? '') === 'N' ? '' : ' (' . ($r['abnormal_flag'] ?? '') . ')';
+            $conf = ($r['extraction_confidence'] ?? 'high') === 'low' ? ' [low confidence]' : '';
+            $lines[] = sprintf(
+                '- %s: %s %s%s%s',
+                $r['test_name'] ?? '?',
+                $r['value'] ?? '?',
+                $r['unit'] ?? '',
+                $flag,
+                $conf,
+            );
+        }
+        if (!empty($extraction['warnings'])) {
+            $lines[] = '';
+            $lines[] = '### Warnings';
+            foreach ($extraction['warnings'] as $w) {
+                $lines[] = "- {$w}";
+            }
+        }
+    } else {
+        $lines[] = '## Intake Form Summary';
+        if ($d = $extraction['demographics'] ?? null) {
+            $name = trim(($d['first_name'] ?? '') . ' ' . ($d['last_name'] ?? ''));
+            $lines[] = "- Patient: {$name}" . (empty($d['date_of_birth']) ? '' : " (DOB {$d['date_of_birth']})");
+        }
+        if (!empty($extraction['chief_concern']['text'])) {
+            $lines[] = '- Chief concern: ' . $extraction['chief_concern']['text'];
+        }
+        foreach ($extraction['medications'] ?? [] as $m) {
+            $dose = trim(($m['dose'] ?? '') . ' ' . ($m['frequency'] ?? ''));
+            $lines[] = "- Medication: {$m['name']}" . ($dose ? " — {$dose}" : '');
+        }
+        foreach ($extraction['allergies'] ?? [] as $a) {
+            $lines[] = "- Allergy: {$a['substance']}" . (empty($a['reaction']) ? '' : " — {$a['reaction']}");
+        }
+        foreach ($extraction['family_history'] ?? [] as $f) {
+            $lines[] = "- Family: {$f['relation']} — {$f['condition']}"
+                . (empty($f['age_of_onset']) ? '' : " (onset {$f['age_of_onset']})");
+        }
+    }
+
+    return implode("\n", $lines);
+}
+
+/**
+ * Insert one procedure_report parent + N procedure_result children.
+ * Returns a status row per result; the parent report id is included
+ * for traceability so an operator can find these in the DB later.
+ */
+function _copilot_writeback_lab_results(
+    int $pid,
+    int $userId,
+    string $docUuid,
+    array $extraction,
+): array {
+    $results = $extraction['results'] ?? [];
+    if (!$results) {
+        return ['ok' => true, 'count' => 0, 'note' => 'no results to write'];
+    }
+
+    $issuingLab = $extraction['issuing_lab'] ?? 'AgentForge Extraction';
+    $accession = $extraction['accession_number'] ?? null;
+    $collectionDate = $results[0]['collection_date'] ?? date('Y-m-d');
+
+    // Parent report. procedure_report has dozens of columns; we only
+    // populate the load-bearing ones. report_status='final' so the
+    // results show in the patient's lab tab.
+    $reportId = sqlInsert(
+        'INSERT INTO procedure_report (date_collected, date_report, source, '
+        . 'report_status, review_status, report_notes) '
+        . 'VALUES (?, NOW(), ?, ?, ?, ?)',
+        [
+            $collectionDate . ' 00:00:00',
+            $userId,
+            'final',
+            'reviewed',
+            "AgentForge extraction from DocumentReference#{$docUuid} (issuing lab: {$issuingLab}"
+                . ($accession ? ", accession: {$accession}" : '') . ')',
+        ],
+    );
+
+    $resultIds = [];
+    foreach ($results as $r) {
+        $resultId = sqlInsert(
+            'INSERT INTO procedure_result (procedure_report_id, result_code, '
+            . 'result_text, units, range, abnormal, result_status, result, comments) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [
+                $reportId,
+                $r['test_name'] ?? '',
+                $r['test_name'] ?? '',
+                $r['unit'] ?? '',
+                _copilot_format_range($r['reference_range'] ?? null),
+                _copilot_map_abnormal_flag($r['abnormal_flag'] ?? 'N'),
+                'final',
+                (string) ($r['value'] ?? ''),
+                "Citation page {$r['citation']['page_or_section']}: "
+                    . ($r['citation']['quote_or_value'] ?? ''),
+            ],
+        );
+        $resultIds[] = $resultId;
+    }
+
+    return [
+        'ok' => true,
+        'procedure_report_id' => $reportId,
+        'procedure_result_ids' => $resultIds,
+        'count' => count($resultIds),
+    ];
+}
+
+function _copilot_format_range(?array $range): string
+{
+    if (!is_array($range)) {
+        return '';
+    }
+    $unit = $range['unit'] ?? '';
+    switch ($range['comparator'] ?? '') {
+        case 'between':
+            return sprintf('%s - %s %s', $range['low'] ?? '', $range['high'] ?? '', $unit);
+        case '<':
+            return sprintf('< %s %s', $range['high'] ?? '', $unit);
+        case '<=':
+            return sprintf('≤ %s %s', $range['high'] ?? '', $unit);
+        case '>':
+            return sprintf('> %s %s', $range['low'] ?? '', $unit);
+        case '>=':
+            return sprintf('≥ %s %s', $range['low'] ?? '', $unit);
+        default:
+            return '';
+    }
+}
+
+function _copilot_map_abnormal_flag(string $flag): string
+{
+    // OpenEMR's procedure_result.abnormal column accepts: 'no', 'yes',
+    // 'high', 'low'. Map our schema's HL7 v2 codes accordingly. 'LL'/'HH'
+    // are critical low/high — surface as 'high'/'low' since OpenEMR has
+    // no separate critical column without a custom widget.
+    return match ($flag) {
+        'L', 'LL' => 'low',
+        'H', 'HH' => 'high',
+        default => 'no',
+    };
 }
 
 function _copilot_pid_to_uuid(int $pid): ?string

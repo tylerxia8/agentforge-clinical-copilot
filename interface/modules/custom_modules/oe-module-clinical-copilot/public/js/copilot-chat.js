@@ -224,6 +224,23 @@
             body_div.appendChild(matchLine);
         }
 
+        const wb = body.writeback || {};
+        if (wb.records) {
+            const wbLine = document.createElement("p");
+            wbLine.className = "copilot-md-h3";
+            const written = [];
+            if (wb.records.pnotes?.ok) written.push("Patient Notes ↗");
+            if (wb.records.documents?.ok) written.push("Documents tab ↗");
+            if (wb.records.procedure_results?.ok) {
+                const n = wb.records.procedure_results.count || 0;
+                written.push(`Lab results ↗ (${n})`);
+            }
+            wbLine.textContent = written.length
+                ? `Saved to chart: ${written.join(" · ")}`
+                : "Saved to chart: nothing landed (see logs)";
+            body_div.appendChild(wbLine);
+        }
+
         el.appendChild(body_div);
         messagesEl.appendChild(el);
         messagesEl.scrollTop = messagesEl.scrollHeight;
