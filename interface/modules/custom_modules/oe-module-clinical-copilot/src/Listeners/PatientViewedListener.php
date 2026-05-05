@@ -66,6 +66,24 @@ final class PatientViewedListener
         $pdfEndpoint = $this->installPath . '/public/pdf.php';
         $patientName = $this->lookupPatientName($pid);
 
+        // Cache-busting versions for our static assets. Browsers
+        // aggressively cache JS/CSS at the Apache layer; without a
+        // version query string a deployed change can sit invisible
+        // for hours behind a stale cache. We use the file's mtime
+        // so a redeploy that overwrites the file invalidates the
+        // browser cache for that specific file.
+        $assetDir = __DIR__ . '/../../public';
+        $versionFor = static function (string $relPath) use ($assetDir): string {
+            $abs = realpath($assetDir . '/' . $relPath);
+            if ($abs === false || !is_file($abs)) {
+                return (string) time();
+            }
+            return (string) filemtime($abs);
+        };
+        $jsCopilotV = $versionFor('js/copilot-chat.js');
+        $jsOverlayV = $versionFor('js/pdf-overlay.js');
+        $cssV = $versionFor('css/copilot-panel.css');
+
         // Default starter prompts the doctor can click instead of typing.
         // Mirrors the standalone demo UI (UC-1 / UC-2 / UC-3 categories).
         $suggestions = [
@@ -78,7 +96,7 @@ final class PatientViewedListener
         // Render the panel container + a small launcher script. The
         // heavy JS lives in public/js/copilot-chat.js.
         ?>
-        <link rel="stylesheet" href="<?= htmlspecialchars($this->installPath . '/public/css/copilot-panel.css', ENT_QUOTES) ?>">
+        <link rel="stylesheet" href="<?= htmlspecialchars($this->installPath . '/public/css/copilot-panel.css?v=' . $cssV, ENT_QUOTES) ?>">
         <div id="copilot-panel" data-endpoint="<?= htmlspecialchars($endpoint, ENT_QUOTES) ?>"
              data-upload-endpoint="<?= htmlspecialchars($uploadEndpoint, ENT_QUOTES) ?>"
              data-pdf-endpoint="<?= htmlspecialchars($pdfEndpoint, ENT_QUOTES) ?>"
@@ -122,8 +140,8 @@ final class PatientViewedListener
                 <button type="submit" class="copilot-send">Send</button>
             </form>
         </div>
-        <script src="<?= htmlspecialchars($this->installPath . '/public/js/pdf-overlay.js', ENT_QUOTES) ?>" defer></script>
-        <script src="<?= htmlspecialchars($this->installPath . '/public/js/copilot-chat.js', ENT_QUOTES) ?>" defer></script>
+        <script src="<?= htmlspecialchars($this->installPath . '/public/js/pdf-overlay.js?v=' . $jsOverlayV, ENT_QUOTES) ?>" defer></script>
+        <script src="<?= htmlspecialchars($this->installPath . '/public/js/copilot-chat.js?v=' . $jsCopilotV, ENT_QUOTES) ?>" defer></script>
         <?php
     }
 
