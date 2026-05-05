@@ -245,11 +245,16 @@
         messagesEl.appendChild(el);
         messagesEl.scrollTop = messagesEl.scrollHeight;
 
-        // Prefill the input with a follow-up so the user can ask a
-        // question about the freshly-extracted document with one click.
-        const followup = docType === "lab_pdf"
-            ? "Anything I should follow up on from these results?"
-            : "Quick read on this patient using what's now in the chart.";
+        // Prefill the input with a follow-up the agent can answer
+        // *from the chart bundle*. The just-extracted lab values
+        // are visible to the LLM in conversation history but aren't
+        // yet citable rows in the verifier's seen_tool_results — a
+        // follow-up like "interpret these labs" would fail
+        // verification and dump the verified-facts fallback. Until
+        // the extraction is registered with the verifier on the
+        // next chat turn (Sunday follow-up), pre-fill questions
+        // that ground in the bundle the verifier already accepts.
+        const followup = "Quick read on this patient";
         input.value = followup;
         input.focus();
     }

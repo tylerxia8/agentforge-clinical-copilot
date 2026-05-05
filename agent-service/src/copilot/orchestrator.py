@@ -196,7 +196,7 @@ class Orchestrator:
                 text=(
                     "I'm not confident in part of that answer. Here's what "
                     "I can defend with sources:\n\n"
-                    + _verified_facts_only(seen_tool_results)
+                    + tokens.rehydrate(_verified_facts_only(seen_tool_results))
                 ),
                 sources=sorted(verdict.cited_ids),
                 refused=True,
@@ -254,13 +254,129 @@ def _extract_text(content: list[Any]) -> str:
 
 
 def _verified_facts_only(tool_results: list[dict[str, Any]]) -> str:
-    """Last-resort fallback when verification fails 3x. Lists the raw
-    rows so the doctor sees the underlying data even if the model's
-    summary couldn't be verified.
+    """Last-resort fallback when verification fails 3x. Emits one
+    human-readable line per row so the doctor sees the chart facts
+    even when the model's summary couldn't be verified — without
+    dumping raw JSON in the chat panel.
+
+    Rows are grouped by resource type (Medications, Problems,
+    Allergies, Encounters, Vitals, Labs, Immunizations) for
+    scan-readability. Empty groups are skipped.
     """
-    lines: list[str] = []
+    by_type: dict[str, list[str]] = {}
+
     for tr in tool_results:
         for row in tr.get("rows", []):
-            rid = row.get("id", "?")
-            lines.append(f"  - [{rid}] {json.dumps({k: v for k, v in row.items() if not k.startswith('_')})}")
-    return "\n".join(lines) if lines else "  (no tool data was retrieved)"
+            rid = row.get("id") or ""
+            kind = rid.split("#", 1)[0] if "#" in rid else "Other"
+            label = _format_row(rid, kind, row)
+            if label:
+                by_type.setdefault(kind, []).append(label)
+
+    if not by_type:
+        return "  (no tool data was retrieved)"
+
+    # Section order roughly matches the UC-1 briefing order
+    section_order = [
+        ("MedicationRequest", "Medications"),
+        ("Condition",         "Problems"),
+        ("AllergyIntolerance", "Allergies"),
+        ("Encounter",         "Recent encounters"),
+        ("Observation",       "Vitals & labs"),
+        ("Immunization",      "Immunizations"),
+    ]
+    seen_kinds: set[str] = set()
+    sections: list[str] = []
+    for kind, heading in section_order:
+        if kind in by_type:
+            sections.append(f"**{heading}**")
+            sections.extend(by_type[kind])
+            sections.append("")
+            seen_kinds.add(kind)
+    # Anything we didn't have a heading for, dump under a generic bucket
+    for kind, lines in by_type.items():
+        if kind in seen_kinds:
+            continue
+        sections.append(f"**{kind}**")
+        sections.extend(lines)
+        sections.append("")
+
+    return "\n".join(line for line in sections if line is not None).rstrip()
+
+
+def _format_row(rid: str, kind: str, row: dict[str, Any]) -> str:
+    """One-line human label for a tool row, by resource kind. Used by
+    the fallback to render facts the verifier rejected as a tidy
+    bullet list rather than raw JSON."""
+
+    # MedicationRequest: "Lisinopril 20 mg PO daily [MedicationRequest#…]"
+    if kind == "MedicationRequest":
+        drug = row.get("drug_display") or "(unknown drug)"
+        dose = row.get("dosage_text") or ""
+        suffix = f" — {dose}" if dose else ""
+        return f"  - {drug}{suffix} [{rid}]"
+
+    # Condition: "Hypertension (I10), unconfirmed [Condition#…]"
+    if kind == "Condition":
+        display = row.get("display")
+        if not display:
+            codes = row.get("codes") or []
+            if codes:
+                display = codes[0].get("display") or codes[0].get("code") or "Unknown"
+            else:
+                display = "Unknown condition"
+        verif = row.get("verification_status")
+        verif_suffix = f", {verif}" if verif and verif != "confirmed" else ""
+        return f"  - {display}{verif_suffix} [{rid}]"
+
+    # AllergyIntolerance: "Penicillin (medication; confirmed) [Allergy…#…]"
+    if kind == "AllergyIntolerance":
+        substance = row.get("substance") or "(unknown substance)"
+        cats = row.get("category") or []
+        cat_str = "/".join(cats) if cats else ""
+        verif = row.get("verification_status") or ""
+        bits = [b for b in (cat_str, verif) if b]
+        suffix = f" ({'; '.join(bits)})" if bits else ""
+        return f"  - {substance}{suffix} [{rid}]"
+
+    # Encounter: "Diabetes follow-up (2026-04-15) [Encounter#…]"
+    if kind == "Encounter":
+        types = row.get("type") or []
+        reason = row.get("reason_code") or []
+        label = (reason[0] if reason else (types[0] if types else "Visit")) or "Visit"
+        date = (row.get("period_start") or "")[:10]
+        suffix = f" ({date})" if date else ""
+        return f"  - {label}{suffix} [{rid}]"
+
+    # Observation (vitals + labs): show value + unit when present
+    if kind == "Observation":
+        name = row.get("vital_name") or row.get("test_name") or "Observation"
+        value = row.get("value")
+        unit = row.get("unit") or ""
+        date = (row.get("effective_datetime") or "")[:10]
+        # Composite (BP) stores values under .components
+        if value is None and row.get("components"):
+            comps = [
+                f"{c.get('value')}{c.get('unit') or ''}"
+                for c in row["components"] if c.get("value") is not None
+            ]
+            if comps:
+                return f"  - {name}: {' / '.join(comps)} ({date}) [{rid}]"
+            # Composite with no values (stub) — skip rather than emit noise
+            return ""
+        if value is None:
+            # Stub reading with no value — skip rather than dumping name only
+            return ""
+        unit_str = f" {unit}" if unit else " (units not recorded)"
+        date_str = f" ({date})" if date else ""
+        return f"  - {name}: {value}{unit_str}{date_str} [{rid}]"
+
+    # Immunization: "Influenza vaccine (2024-10-12) [Immunization#…]"
+    if kind == "Immunization":
+        name = row.get("vaccine_name") or "Vaccine"
+        date = (row.get("occurrence_datetime") or "")[:10]
+        suffix = f" ({date})" if date else ""
+        return f"  - {name}{suffix} [{rid}]"
+
+    # Unknown kind — minimal tag so the user at least sees the citation id
+    return f"  - {rid}"
