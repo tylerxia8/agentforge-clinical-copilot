@@ -27,6 +27,10 @@ dependencies = [
     # bodies live in pure-function modules so they remain testable
     # without spinning up the LangGraph runtime.
     "langgraph>=0.2",
+    # W2 — required by FastAPI's File/Form for /agent/extract's
+    # multipart upload. FastAPI defers this dep so it must be
+    # explicit on the project.
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
