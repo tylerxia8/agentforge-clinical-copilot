@@ -1,0 +1,130 @@
+# Calibrate the W2 eval baseline — manually triggered.
+#
+# What it does:
+#   1. Runs the 63-case W2 eval suite against the deployed staging
+#      copilot-agent service.
+#   2. Saves the per-category + per-rubric pass rates to
+#      agent-service/evals/w2/baseline.json.
+#   3. Commits the (potentially changed) baseline.json back to main.
+#
+# When to run:
+#   - After a known-good merge whose pass rates you want to lock in
+#     as the new floor for the eval-gate workflow.
+#   - The gate (.github/workflows/eval-gate.yml) compares each PR's
+#     rates against this baseline; without calibration, the seeded
+#     1.00-across-the-board baseline either silently passes (if the
+#     rates are also 1.00) or noisily fails (if any category is below
+#     the 0.90 floor).
+#
+# How to run:
+#   GitHub Actions tab -> "Calibrate W2 eval baseline" -> Run workflow
+#
+# Cost / wall time:
+#   ~$2.50 in Anthropic credits (63 cases through Claude Sonnet 4.6),
+#   ~10 min wall time (gated by Anthropic's 30K-tokens-per-minute
+#   per-org rate limit, so we run cases sequentially).
+
+name: Calibrate W2 eval baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Optional one-line note to append to the commit message"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    defaults:
+      run:
+        working-directory: agent-service
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install agent-service
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+
+      - name: Run W2 eval suite + save baseline
+        env:
+          AGENT_URL: ${{ vars.AGENT_URL || 'https://copilot-agent-production-ba87.up.railway.app' }}
+          AGENT_SHARED_SECRET: ${{ secrets.AGENT_SHARED_SECRET }}
+        run: |
+          python -m evals.w2.runner \
+            --json eval-results.json \
+            --save-baseline evals/w2/baseline.json
+
+      - name: Upload eval results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w2-baseline-eval-results
+          path: agent-service/eval-results.json
+          retention-days: 90
+
+      - name: Commit + push calibrated baseline
+        # Skip the commit step if save-baseline didn't change the file
+        # (a clean re-run on identical rates produces an identical file).
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add evals/w2/baseline.json
+          if git diff --cached --quiet; then
+            echo "baseline.json unchanged — nothing to commit"
+            exit 0
+          fi
+          MSG="chore(w2-eval): calibrate baseline from production run"
+          NOTE="${{ github.event.inputs.note }}"
+          if [ -n "$NOTE" ]; then
+            MSG="$MSG — $NOTE"
+          fi
+          git commit -m "$MSG"
+          git push origin main
+
+      - name: Post results summary
+        if: always()
+        run: |
+          if [ -f eval-results.json ]; then
+            {
+              echo "## W2 baseline calibration"
+              echo
+              python -c "
+          import json
+          r = json.load(open('eval-results.json'))
+          s = r['summary']
+          print(f'Total cases run: **{s[\"total_cases\"]}**')
+          print()
+          print('### Per-rubric pass rates')
+          print('| Rubric | Passed | Total | Rate |')
+          print('|---|---|---|---|')
+          for name, totals in s['rubric_totals'].items():
+              rate = s['rubric_rates'][name]
+              print(f\"| {name} | {totals['passed']} | {totals['total']} | {rate:.0%} |\")
+          print()
+          print('### Per-category pass rates (the gate compares against these)')
+          print('| Category | Passed | Total | Rate |')
+          print('|---|---|---|---|')
+          for cat, totals in s['category_totals'].items():
+              rate = s['category_rates'][cat]
+              print(f\"| {cat} | {totals['passed']} | {totals['total']} | {rate:.0%} |\")
+          "
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
