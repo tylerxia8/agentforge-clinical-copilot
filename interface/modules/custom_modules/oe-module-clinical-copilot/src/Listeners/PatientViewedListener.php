@@ -63,6 +63,7 @@ final class PatientViewedListener
         $csrf = CsrfUtils::collectCsrfToken();
         $endpoint = $this->installPath . '/public/chat.php';
         $uploadEndpoint = $this->installPath . '/public/upload.php';
+        $pdfEndpoint = $this->installPath . '/public/pdf.php';
         $patientName = $this->lookupPatientName($pid);
 
         // Default starter prompts the doctor can click instead of typing.
@@ -80,6 +81,7 @@ final class PatientViewedListener
         <link rel="stylesheet" href="<?= htmlspecialchars($this->installPath . '/public/css/copilot-panel.css', ENT_QUOTES) ?>">
         <div id="copilot-panel" data-endpoint="<?= htmlspecialchars($endpoint, ENT_QUOTES) ?>"
              data-upload-endpoint="<?= htmlspecialchars($uploadEndpoint, ENT_QUOTES) ?>"
+             data-pdf-endpoint="<?= htmlspecialchars($pdfEndpoint, ENT_QUOTES) ?>"
              data-csrf="<?= htmlspecialchars($csrf, ENT_QUOTES) ?>"
              data-patient-pid="<?= htmlspecialchars((string) $pid, ENT_QUOTES) ?>"
              data-patient-name="<?= htmlspecialchars($patientName, ENT_QUOTES) ?>"
@@ -120,6 +122,7 @@ final class PatientViewedListener
                 <button type="submit" class="copilot-send">Send</button>
             </form>
         </div>
+        <script src="<?= htmlspecialchars($this->installPath . '/public/js/pdf-overlay.js', ENT_QUOTES) ?>" defer></script>
         <script src="<?= htmlspecialchars($this->installPath . '/public/js/copilot-chat.js', ENT_QUOTES) ?>" defer></script>
         <?php
     }

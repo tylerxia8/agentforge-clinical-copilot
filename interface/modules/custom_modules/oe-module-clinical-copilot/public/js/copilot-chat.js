@@ -15,6 +15,7 @@
 
     const endpoint = panel.dataset.endpoint;
     const uploadEndpoint = panel.dataset.uploadEndpoint;
+    const pdfEndpoint = panel.dataset.pdfEndpoint;
     const csrf = panel.dataset.csrf;
     const patientPid = panel.dataset.patientPid;
     const messagesEl = document.getElementById("copilot-messages");
@@ -146,42 +147,86 @@
         const docType = body.doc_type || "lab_pdf";
         const ex = body.extraction || {};
         const bbox = body.bbox_match || {};
-        const lines = [];
+        const documentReferenceId = body.document_reference_id || ex.document_reference_id;
+
+        // Build the message element by hand so we can attach 🔎 buttons
+        // to individual fact rows. The W1 markdown renderer treats
+        // ``- foo`` lines as bullets — we mimic that visual without
+        // going through markdown so the per-row click handlers stay live.
+        const el = document.createElement("div");
+        el.className = "copilot-msg copilot-msg-assistant";
+
+        const head = document.createElement("div");
+        head.className = "copilot-md-h copilot-md-h2";
+        const ul = document.createElement("ul");
+
+        const factRow = (label, citation) => {
+            const li = document.createElement("li");
+            const text = document.createElement("span");
+            text.textContent = label;
+            li.appendChild(text);
+            if (citation && citation.bbox && documentReferenceId) {
+                li.appendChild(buildSourceButton(documentReferenceId, citation));
+            }
+            ul.appendChild(li);
+        };
 
         if (docType === "lab_pdf") {
             const results = ex.results || [];
-            const warnings = ex.warnings || [];
-            lines.push(`**Extracted ${results.length} lab result${results.length === 1 ? "" : "s"}**`);
+            head.textContent = `Extracted ${results.length} lab result${results.length === 1 ? "" : "s"}`;
             for (const r of results.slice(0, 12)) {
                 const flag = r.abnormal_flag && r.abnormal_flag !== "N" ? ` (${r.abnormal_flag})` : "";
                 const conf = r.extraction_confidence === "low" ? " ⚠ low confidence" : "";
-                lines.push(`- ${r.test_name}: ${r.value} ${r.unit}${flag}${conf}`);
+                factRow(`${r.test_name}: ${r.value} ${r.unit}${flag}${conf}`, r.citation);
             }
-            if (results.length > 12) lines.push(`- …and ${results.length - 12} more`);
-            for (const w of warnings) lines.push(`- ⚠ ${w}`);
+            if (results.length > 12) {
+                const li = document.createElement("li");
+                li.textContent = `…and ${results.length - 12} more`;
+                ul.appendChild(li);
+            }
+            for (const w of ex.warnings || []) factRow(`⚠ ${w}`, null);
         } else {
-            const meds = ex.medications || [];
-            const allergies = ex.allergies || [];
-            const fam = ex.family_history || [];
-            const warnings = ex.warnings || [];
-            lines.push(`**Extracted intake form**`);
+            head.textContent = "Extracted intake form";
             if (ex.demographics) {
                 const d = ex.demographics;
-                lines.push(`- Patient: ${d.first_name} ${d.last_name}${d.date_of_birth ? ` (DOB ${d.date_of_birth})` : ""}`);
+                factRow(
+                    `Patient: ${d.first_name} ${d.last_name}${d.date_of_birth ? ` (DOB ${d.date_of_birth})` : ""}`,
+                    d.citation,
+                );
             }
-            if (ex.chief_concern?.text) lines.push(`- Chief concern: ${ex.chief_concern.text}`);
-            if (meds.length) lines.push(`- Medications: ${meds.length}`);
-            if (allergies.length) lines.push(`- Allergies: ${allergies.length}`);
-            if (fam.length) lines.push(`- Family history entries: ${fam.length}`);
-            for (const w of warnings) lines.push(`- ⚠ ${w}`);
+            if (ex.chief_concern?.text) {
+                factRow(`Chief concern: ${ex.chief_concern.text}`, ex.chief_concern.citation);
+            }
+            for (const m of ex.medications || []) factRow(
+                `Medication: ${m.name}${m.dose ? ` ${m.dose}` : ""}${m.frequency ? `, ${m.frequency}` : ""}`,
+                m.citation,
+            );
+            for (const a of ex.allergies || []) factRow(
+                `Allergy: ${a.substance}${a.reaction ? ` — ${a.reaction}` : ""}`,
+                a.citation,
+            );
+            for (const f of ex.family_history || []) factRow(
+                `Family: ${f.relation} — ${f.condition}${f.age_of_onset ? ` (onset ${f.age_of_onset})` : ""}`,
+                f.citation,
+            );
+            for (const w of ex.warnings || []) factRow(`⚠ ${w}`, null);
         }
+
+        const body_div = document.createElement("div");
+        body_div.className = "copilot-msg-body";
+        body_div.appendChild(head);
+        body_div.appendChild(ul);
 
         if (bbox.walked) {
-            lines.push("");
-            lines.push(`*Source bbox match: ${bbox.matched}/${bbox.walked} citations.*`);
+            const matchLine = document.createElement("p");
+            matchLine.className = "copilot-md-h3";
+            matchLine.textContent = `Source bbox match: ${bbox.matched}/${bbox.walked} citations.`;
+            body_div.appendChild(matchLine);
         }
 
-        appendMessage("assistant", lines.join("\n"));
+        el.appendChild(body_div);
+        messagesEl.appendChild(el);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
 
         // Prefill the input with a follow-up so the user can ask a
         // question about the freshly-extracted document with one click.
@@ -190,6 +235,30 @@
             : "Quick read on this patient using what's now in the chart.";
         input.value = followup;
         input.focus();
+    }
+
+    function buildSourceButton(documentReferenceId, citation) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "copilot-source-btn";
+        btn.title = "Show source";
+        btn.setAttribute("aria-label", "Show source on the document");
+        btn.textContent = "🔎";
+        btn.addEventListener("click", () => {
+            const overlay = window.CopilotPdfOverlay;
+            if (!overlay || typeof overlay.open !== "function") {
+                appendMessage("assistant", "PDF viewer not loaded — refresh and try again.", { error: true });
+                return;
+            }
+            const url = `${pdfEndpoint}?id=${encodeURIComponent(documentReferenceId)}&csrf=${encodeURIComponent(csrf)}`;
+            overlay.open({
+                pdfUrl: url,
+                page: typeof citation.page_or_section === "number" ? citation.page_or_section : 1,
+                bbox: citation.bbox,
+                quote: citation.quote_or_value,
+            });
+        });
+        return btn;
     }
 
     form.addEventListener("submit", async (ev) => {
