@@ -15,6 +15,65 @@ from anthropic import AsyncAnthropic
 from copilot.observability import langfuse_client, observe
 from copilot.settings import settings
 
+# Per-million-token rates in USD. Source: anthropic.com/pricing as
+# of Sonnet 4.6 launch. The Langfuse cost dashboard reads these via
+# update_current_generation(cost_details=...).
+#
+# Cache-write is the 5-minute TTL price; cache-read is the hit price.
+# Cache-creation tokens incur both the write rate AND the input rate
+# in our accounting, matching how Anthropic bills us.
+_PRICING_PER_MTOK: dict[str, dict[str, float]] = {
+    "claude-sonnet-4-6": {
+        "input":         3.00,
+        "output":       15.00,
+        "cache_write":   3.75,
+        "cache_read":    0.30,
+    },
+    "claude-opus-4-7": {
+        "input":        15.00,
+        "output":       75.00,
+        "cache_write": 18.75,
+        "cache_read":   1.50,
+    },
+    "claude-haiku-4-5": {
+        "input":         1.00,
+        "output":        5.00,
+        "cache_write":   1.25,
+        "cache_read":    0.10,
+    },
+}
+
+
+def _compute_cost(model: str, usage: Any) -> dict[str, float] | None:
+    """Translate token counts into per-call USD costs Langfuse can
+    aggregate. Returns ``None`` for unknown models so the dashboard
+    falls back to whatever default it would otherwise compute."""
+    if not usage:
+        return None
+    rates = _PRICING_PER_MTOK.get(model)
+    if rates is None:
+        return None
+
+    input_tok = getattr(usage, "input_tokens", 0) or 0
+    output_tok = getattr(usage, "output_tokens", 0) or 0
+    cache_write_tok = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    cache_read_tok = getattr(usage, "cache_read_input_tokens", 0) or 0
+
+    # Anthropic's token counts already separate cache-create / cache-read
+    # from regular input. But we DO bill for both lines on a cache write
+    # (the input goes through both pipes once). Match the invoice:
+    cost_input = input_tok * rates["input"] / 1_000_000
+    cost_output = output_tok * rates["output"] / 1_000_000
+    cost_cache_w = cache_write_tok * rates["cache_write"] / 1_000_000
+    cost_cache_r = cache_read_tok * rates["cache_read"] / 1_000_000
+    return {
+        "input": round(cost_input, 6),
+        "output": round(cost_output, 6),
+        "cache_write": round(cost_cache_w, 6),
+        "cache_read": round(cost_cache_r, 6),
+        "total": round(cost_input + cost_output + cost_cache_w + cost_cache_r, 6),
+    }
+
 
 class LLM:
     def __init__(self, model_id: str | None = None) -> None:
@@ -39,20 +98,41 @@ class LLM:
 
         response = await self._client.messages.create(**kwargs)
 
-        # Record model + token usage on the current Langfuse generation.
+        # Record model + token usage + cost on the current Langfuse
+        # generation. Cache tokens (creation_input / read_input) are
+        # tracked separately so the dashboard can show cache-hit rate
+        # — that's the W2 cost lever, not raw token volume.
         if langfuse_client is not None:
             try:
                 usage = getattr(response, "usage", None)
                 input_tokens = getattr(usage, "input_tokens", 0) if usage else 0
                 output_tokens = getattr(usage, "output_tokens", 0) if usage else 0
-                langfuse_client.update_current_generation(
-                    model=self._model,
-                    usage_details={
+                cache_write = (
+                    getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
+                ) or 0
+                cache_read = (
+                    getattr(usage, "cache_read_input_tokens", 0) if usage else 0
+                ) or 0
+                stop_reason = getattr(response, "stop_reason", None)
+
+                update_kwargs: dict[str, Any] = {
+                    "model": self._model,
+                    "usage_details": {
                         "input": input_tokens,
                         "output": output_tokens,
-                        "total": input_tokens + output_tokens,
+                        "cache_read_input": cache_read,
+                        "cache_write_input": cache_write,
+                        "total": input_tokens + output_tokens + cache_write + cache_read,
                     },
-                )
+                    "metadata": {
+                        "stop_reason": stop_reason,
+                        "tools_offered": [t.get("name") for t in (tools or [])],
+                    },
+                }
+                cost_details = _compute_cost(self._model, usage)
+                if cost_details is not None:
+                    update_kwargs["cost_details"] = cost_details
+                langfuse_client.update_current_generation(**update_kwargs)
             except Exception:  # noqa: BLE001
                 pass  # observability must not fail the call
 

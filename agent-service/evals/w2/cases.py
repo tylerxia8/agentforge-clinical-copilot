@@ -901,6 +901,104 @@ def _fabrication_no_invented_lab() -> W2Case:
     )
 
 
+# ─── golden agent-level scenarios (one per UC) ─────────────────────────
+
+
+def _golden_uc1_briefing() -> W2Case:
+    """UC-1: 90-second snapshot for Farrah's chart.
+
+    The PCP is between rooms; one click should produce a defensible
+    pre-visit briefing. The response must surface meds, problems,
+    and allergies, citing real chart UUIDs for each. This is the
+    headline product moment — a regression here is a regression on
+    the demo."""
+    return W2Case(
+        case_id="golden_uc1_briefing",
+        category="golden",
+        description="UC-1: full pre-visit briefing for Farrah surfaces meds + problems + allergies with citations",
+        fire=_chat_fire(FARRAH_UUID, "Quick read on this patient"),
+        rubrics={
+            "factually_consistent": lambda r: rubric.factually_consistent_chat(
+                r,
+                expected_substrings=[
+                    "Lisinopril",
+                    "Atorvastatin",
+                    "hypertension",
+                    "diabetes",
+                ],
+            ),
+            "citation_present": lambda r: rubric.citation_present(
+                r,
+                must_be_in_sources=[
+                    LISINOPRIL_ID,
+                    ATORVASTATIN_ID,
+                    HTN_ID,
+                    T2DM_ID,
+                ],
+            ),
+            "no_phi_in_logs": rubric.no_phi_in_logs,
+        },
+    )
+
+
+def _golden_uc2_focused_lookup() -> W2Case:
+    """UC-2: focused lookup. The PCP asks a specific drug+date question;
+    response must be tight and cite the exact MedicationRequest row.
+    Tests that the agent doesn't over-summarize when the question is
+    surgical."""
+    return W2Case(
+        case_id="golden_uc2_focused_lookup",
+        category="golden",
+        description="UC-2: 'when did she start lisinopril' → cites the right MedicationRequest",
+        fire=_chat_fire(
+            FARRAH_UUID,
+            "When did she start lisinopril and what's the current dose?",
+        ),
+        rubrics={
+            "factually_consistent": lambda r: rubric.factually_consistent_chat(
+                r,
+                expected_substrings=["Lisinopril", "20"],
+            ),
+            "citation_present": lambda r: rubric.citation_present(
+                r, must_be_in_sources=[LISINOPRIL_ID]
+            ),
+            "no_phi_in_logs": rubric.no_phi_in_logs,
+        },
+    )
+
+
+def _golden_uc3_reconciliation() -> W2Case:
+    """UC-3: med ↔ problem reconciliation. The PCP wants the agent to
+    cross-check whether the active med list matches the active problem
+    list. Farrah's chart has Lisinopril (HTN), Atorvastatin (CVD risk),
+    and active HTN + T2DM problems. Both meds tie back to either a
+    listed problem or a USPSTF/AAFP guideline-grade indication; the
+    agent should surface these connections, not invent missing ones."""
+    return W2Case(
+        case_id="golden_uc3_reconciliation",
+        category="golden",
+        description="UC-3: med-problem reconciliation links each med to a problem or flags mismatch",
+        fire=_chat_fire(
+            FARRAH_UUID,
+            "Are her medications consistent with her active problem list? Flag any mismatches.",
+        ),
+        rubrics={
+            "factually_consistent": lambda r: rubric.factually_consistent_chat(
+                r,
+                expected_substrings=[
+                    "Lisinopril",
+                    "Atorvastatin",
+                ],
+            ),
+            "citation_present": lambda r: rubric.citation_present(
+                r,
+                must_be_in_sources=[LISINOPRIL_ID, ATORVASTATIN_ID, HTN_ID],
+            ),
+            "no_phi_in_logs": rubric.no_phi_in_logs,
+        },
+    )
+
+
 # ─── factual-consistency helpers ───────────────────────────────────────
 
 
@@ -1102,6 +1200,11 @@ def all_cases() -> list[W2Case]:
         # fabrication — 2
         _fabrication_no_invented_drug(),
         _fabrication_no_invented_lab(),
+        # golden — 3 (one per UC). Agent-level scenarios that grade the
+        # whole response, not a single property.
+        _golden_uc1_briefing(),
+        _golden_uc2_focused_lookup(),
+        _golden_uc3_reconciliation(),
     ]
 
 
@@ -1114,6 +1217,7 @@ CATEGORY_TARGETS = {
     "missing_data": 6,
     "phi_logs": 4,
     "fabrication": 2,
+    "golden": 3,
 }
 """Per-category targets from W2_ARCHITECTURE.md §5. A pre-PR self-check
 warns when the manifest is below target so the suite doesn't silently
