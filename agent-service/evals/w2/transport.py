@@ -62,11 +62,20 @@ def mint_token(patient_uuid: str, user_id: int = 1) -> str:
 # ─── chat ──────────────────────────────────────────────────────────────
 
 
-def chat(*, patient_uuid: str, message: str) -> dict:
+def chat(
+    *,
+    patient_uuid: str,
+    message: str,
+    history: list[dict] | None = None,
+) -> dict:
     """POST /agent/chat. Returns the parsed JSON body. Errors return
     a dict with ``_status`` (the HTTP code) and ``_error`` (str) so the
-    rubric checkers can grade them rather than crash the runner."""
-    body = json.dumps({"message": message, "history": []}).encode()
+    rubric checkers can grade them rather than crash the runner.
+
+    ``history`` is an optional list of prior message turns in the
+    Anthropic-style ``{role, content}`` shape. Used by multi-step
+    cases to thread context across turns."""
+    body = json.dumps({"message": message, "history": history or []}).encode()
     req = urllib.request.Request(
         f"{AGENT_URL}/agent/chat",
         method="POST",
@@ -83,6 +92,34 @@ def chat(*, patient_uuid: str, message: str) -> dict:
         return _decode(e.code, e.read())
     except Exception as e:  # noqa: BLE001
         return {"_status": -1, "_error": f"{type(e).__name__}: {e}"}
+
+
+def chat_multiturn(
+    *, patient_uuid: str, turns: list[str]
+) -> dict:
+    """Fire ``len(turns)`` chat turns in sequence, threading history
+    so each turn sees the prior exchange. Returns the LAST turn's
+    response, augmented with a ``_transcript`` field listing every
+    user/assistant pair (also in Anthropic shape) for rubrics that
+    want to grade the full conversation rather than only the final
+    response.
+
+    If any intermediate turn returns an HTTP error, we stop and
+    return a dict with ``_status`` set to the failing code so the
+    case fails fast rather than running the rest of the conversation
+    against a broken state."""
+    history: list[dict] = []
+    last: dict = {}
+    for turn_idx, message in enumerate(turns):
+        last = chat(patient_uuid=patient_uuid, message=message, history=history)
+        if last.get("_status", 200) >= 400 or last.get("_error"):
+            last["_failed_turn_index"] = turn_idx
+            last["_transcript"] = list(history)
+            return last
+        history.append({"role": "user", "content": message})
+        history.append({"role": "assistant", "content": last.get("text", "")})
+    last["_transcript"] = history
+    return last
 
 
 # ─── extract (multipart) ───────────────────────────────────────────────
