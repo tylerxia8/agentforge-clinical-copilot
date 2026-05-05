@@ -1,0 +1,38 @@
+[
+  {
+    "chunk_id": "uspstf-htn-screen-2021",
+    "title": "Screening for Hypertension in Adults",
+    "section": "Recommendation",
+    "source": "USPSTF",
+    "source_url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/hypertension-in-adults-screening",
+    "year": 2021,
+    "text": "The U.S. Preventive Services Task Force recommends screening for hypertension in adults 18 years or older with office blood pressure measurement. The Task Force recommends obtaining blood pressure measurements outside of the clinical setting for diagnostic confirmation before starting treatment. (Grade A)"
+  },
+  {
+    "chunk_id": "uspstf-prediabetes-t2dm-screen-2021",
+    "title": "Screening for Prediabetes and Type 2 Diabetes",
+    "section": "Recommendation",
+    "source": "USPSTF",
+    "source_url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/screening-for-prediabetes-and-type-2-diabetes",
+    "year": 2021,
+    "text": "The U.S. Preventive Services Task Force recommends screening for prediabetes and type 2 diabetes in adults aged 35 to 70 years who have overweight or obesity (BMI ≥25). Clinicians should offer or refer patients with prediabetes to effective preventive interventions. (Grade B) Screening intervals of every 3 years may be reasonable for most adults with normal results."
+  },
+  {
+    "chunk_id": "uspstf-statin-cvd-prevention-2022",
+    "title": "Statin Use for the Primary Prevention of Cardiovascular Disease in Adults",
+    "section": "Recommendation",
+    "source": "USPSTF",
+    "source_url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/statin-use-in-adults-preventive-medication",
+    "year": 2022,
+    "text": "The U.S. Preventive Services Task Force recommends that adults aged 40 to 75 years with one or more cardiovascular disease risk factors (dyslipidemia, diabetes, hypertension, or smoking) and an estimated 10-year cardiovascular disease risk of 10% or greater initiate a statin for the primary prevention of cardiovascular disease. (Grade B) For adults with a 10-year risk of 7.5% to less than 10%, clinicians may selectively offer a statin. (Grade C)"
+  },
+  {
+    "chunk_id": "uspstf-depression-anxiety-screen-2023",
+    "title": "Screening for Depression and Suicide Risk in Adults",
+    "section": "Recommendation",
+    "source": "USPSTF",
+    "source_url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/depression-and-suicide-risk-in-adults-screening",
+    "year": 2023,
+    "text": "The U.S. Preventive Services Task Force recommends screening for depression in the adult population, including pregnant and postpartum persons and older adults. (Grade B) Screening should be implemented with adequate systems in place to ensure accurate diagnosis, effective treatment, and appropriate follow-up. The PHQ-2 and PHQ-9 are commonly used validated instruments."
+  }
+]

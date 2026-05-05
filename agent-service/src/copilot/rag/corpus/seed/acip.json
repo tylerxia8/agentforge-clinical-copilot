@@ -1,0 +1,20 @@
+[
+  {
+    "chunk_id": "acip-adult-flu-2024",
+    "title": "Adult Influenza Vaccination",
+    "section": "Recommended Adult Immunization Schedule",
+    "source": "ACIP",
+    "source_url": "https://www.cdc.gov/vaccines/hcp/imz-schedules/adult-age.html",
+    "year": 2024,
+    "text": "Annual influenza vaccination is recommended for all persons aged 6 months or older who do not have contraindications. For adults 65 years or older, ACIP preferentially recommends the use of a higher-dose or adjuvanted influenza vaccine when available. Persons with egg allergy of any severity may receive any age-appropriate influenza vaccine."
+  },
+  {
+    "chunk_id": "acip-adult-tdap-td-2024",
+    "title": "Tdap and Td Booster in Adults",
+    "section": "Recommended Adult Immunization Schedule",
+    "source": "ACIP",
+    "source_url": "https://www.cdc.gov/vaccines/hcp/imz-schedules/adult-age.html",
+    "year": 2024,
+    "text": "Adults who have not previously received Tdap should receive 1 dose of Tdap, followed by Td or Tdap every 10 years. Pregnant persons should receive 1 dose of Tdap during each pregnancy, preferably during the early part of gestational weeks 27 through 36, regardless of prior vaccination history."
+  }
+]

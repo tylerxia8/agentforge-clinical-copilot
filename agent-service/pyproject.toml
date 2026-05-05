@@ -18,9 +18,20 @@ dependencies = [
     # bbox source for the citation overlay (the vision model never
     # decides coordinates, see W2_ARCHITECTURE.md §1).
     "pdfplumber>=0.11",
+    # W2 — hybrid RAG. BM25 is in-memory and dependency-free; Voyage
+    # and Cohere come in via optional extras so the deploy can run
+    # in a degraded BM25-only mode if those vendor keys are missing.
+    "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]
+# W2 dense retrieval + rerank. Optional so a deploy without these
+# keys still runs in BM25-only mode (the retriever logs a warning
+# and returns top-k from BM25 alone — see W2_ARCHITECTURE.md §3).
+rag-dense = [
+    "voyageai>=0.3",
+    "cohere>=5.13",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
