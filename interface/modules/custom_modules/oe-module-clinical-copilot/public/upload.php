@@ -280,6 +280,9 @@ function _copilot_writeback(
     //    OpenEMR's documents.id is NOT auto_increment in older schemas;
     //    we compute the next id explicitly with a MAX(id)+1 SELECT
     //    rather than rely on a column default that returns 0.
+    //    Then we ALSO insert into categories_to_documents — the
+    //    Documents UI is a category-tree view, and a row that's
+    //    only in `documents` (not joined to a category) is invisible.
     try {
         $next = sqlQuery('SELECT IFNULL(MAX(id), 0) + 1 AS n FROM documents');
         $docId = (int) ($next['n'] ?? 1);
@@ -300,7 +303,20 @@ function _copilot_writeback(
                 hash('sha256', $docUuid),
             ],
         );
-        $records['documents'] = ['ok' => true, 'id' => $docId];
+        // Map doc_type → category id. The seed catalog ships these:
+        //   id=2 "Lab Report"
+        //   id=4 "Patient Information"
+        // If a future deploy renames the categories, the `?? 1` falls
+        // back to the catch-all "Categories" root so the document is
+        // at least somewhere visible.
+        $categoryId = $docType === 'lab_pdf' ? 2 : 4;
+        sqlInsert(
+            'INSERT INTO categories_to_documents (category_id, document_id) VALUES (?, ?)',
+            [$categoryId, $docId],
+        );
+        $records['documents'] = [
+            'ok' => true, 'id' => $docId, 'category_id' => $categoryId,
+        ];
     } catch (\Throwable $e) {
         $records['documents'] = ['ok' => false, 'error' => $e->getMessage()];
     }
