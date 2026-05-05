@@ -20,13 +20,11 @@ from typing import Any
 
 from copilot.context.patient import PatientContext
 from copilot.extraction import (
+    attach_bboxes,
     extract_intake_form,
     extract_lab_pdf,
-    extract_words,
-    match_quote,
 )
-from copilot.extraction.pdf import words_on_page
-from copilot.observability import langfuse_client, observe
+from copilot.observability import observe
 from copilot.orchestrator import Orchestrator
 from copilot.rag import Retriever
 from copilot.schemas import IntakeFormExtraction, LabPdfExtraction
@@ -96,7 +94,7 @@ async def intake_extractor_node(state: WorkerState) -> dict[str, Any]:
         # fail loud if a future doc_type lands without a handler.
         raise ValueError(f"unsupported doc_type: {doc_type!r}")
 
-    _attach_bboxes(extraction, pdf_bytes)
+    attach_bboxes(extraction, pdf_bytes)
 
     record: ExtractionRecord = {
         "doc_type": doc_type,
@@ -107,79 +105,6 @@ async def intake_extractor_node(state: WorkerState) -> dict[str, Any]:
         "attachment": None,  # consumed
         "extractions": [record],
     }
-
-
-def _attach_bboxes(
-    extraction: LabPdfExtraction | IntakeFormExtraction, pdf_bytes: bytes
-) -> None:
-    """Walk every SourceCitation in the extraction; for each, look
-    up the bbox via :func:`match_quote` against the page words. On
-    no-match, demote ``extraction_confidence`` to 'low' on the
-    enclosing fact (when present)."""
-
-    try:
-        words = extract_words(pdf_bytes)
-    except Exception:  # noqa: BLE001
-        logger.warning("pdfplumber word extraction failed; bbox matching skipped",
-                       exc_info=True)
-        return
-
-    # Walk via dump-and-mutate — Pydantic models are immutable enough
-    # that we set citation.bbox via direct attribute on the BBox-bearing
-    # SourceCitation submodel, which is mutable in v2 unless frozen.
-    citations_walked = 0
-    citations_matched = 0
-    for cite_owner, citation in _iter_citations(extraction):
-        page = citation.page_or_section
-        if not isinstance(page, int):
-            continue
-        page_words = words_on_page(words, page)
-        result = match_quote(citation.quote_or_value, page_words)
-        citations_walked += 1
-        if result.bbox is not None:
-            # SourceCitation is a Pydantic BaseModel, mutable by default.
-            citation.bbox = result.bbox  # type: ignore[misc]
-            citations_matched += 1
-        else:
-            # Demote confidence on the owning fact if it has one.
-            current = getattr(cite_owner, "extraction_confidence", None)
-            if current is not None and current != "low":
-                cite_owner.extraction_confidence = "low"  # type: ignore[misc]
-
-    if langfuse_client is not None and citations_walked:
-        try:
-            langfuse_client.create_event(
-                name="extraction.bbox_match_summary",
-                metadata={
-                    "walked": citations_walked,
-                    "matched": citations_matched,
-                    "match_rate": citations_matched / citations_walked,
-                },
-            )
-        except Exception:  # noqa: BLE001
-            pass
-
-
-def _iter_citations(extraction: Any) -> Any:
-    """Yield ``(owner, citation)`` for every SourceCitation in the
-    extraction tree. Owner is the parent fact (LabResult, Demographics,
-    etc.) so we can demote its ``extraction_confidence`` on no-match."""
-    # Lab path
-    if isinstance(extraction, LabPdfExtraction):
-        for result in extraction.results:
-            yield result, result.citation
-        return
-    # Intake path
-    if isinstance(extraction, IntakeFormExtraction):
-        yield extraction.demographics, extraction.demographics.citation
-        if extraction.chief_concern is not None:
-            yield extraction.chief_concern, extraction.chief_concern.citation
-        for med in extraction.medications:
-            yield med, med.citation
-        for allergy in extraction.allergies:
-            yield allergy, allergy.citation
-        for entry in extraction.family_history:
-            yield entry, entry.citation
 
 
 # ─── evidence retriever ────────────────────────────────────────────────
