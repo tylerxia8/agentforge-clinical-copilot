@@ -21,5 +21,23 @@ written to the chart silently.
 
 from copilot.extraction.matcher import MatchResult, match_quote
 from copilot.extraction.pdf import Word, extract_words, page_count
+from copilot.extraction.vision import (
+    build_extraction_tool_schema,
+    extract_intake_form,
+    extract_lab_pdf,
+    hydrate_with_document_id,
+    parse_tool_use_response,
+)
 
-__all__ = ["MatchResult", "Word", "extract_words", "match_quote", "page_count"]
+__all__ = [
+    "MatchResult",
+    "Word",
+    "build_extraction_tool_schema",
+    "extract_intake_form",
+    "extract_lab_pdf",
+    "extract_words",
+    "hydrate_with_document_id",
+    "match_quote",
+    "page_count",
+    "parse_tool_use_response",
+]
