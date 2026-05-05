@@ -277,21 +277,27 @@ function _copilot_writeback(
     }
 
     // 2. documents — link the PDF to the patient's chart
+    //    OpenEMR's documents.id is NOT auto_increment in older schemas;
+    //    we compute the next id explicitly with a MAX(id)+1 SELECT
+    //    rather than rely on a column default that returns 0.
     try {
-        $docId = sqlInsert(
-            'INSERT INTO documents (type, size, date, url, mimetype, foreign_id, '
+        $next = sqlQuery('SELECT IFNULL(MAX(id), 0) + 1 AS n FROM documents');
+        $docId = (int) ($next['n'] ?? 1);
+        sqlInsert(
+            'INSERT INTO documents (id, type, size, date, url, mimetype, foreign_id, '
             . 'docdate, name, hash, list_id, encounter_id, encounter_check, '
             . 'audit_master_approval_status, audit_master_id, documentationOf, '
             . 'encrypted, deleted) '
-            . 'VALUES (?, ?, NOW(), ?, ?, ?, NOW(), ?, ?, 0, 0, "", 1, 0, "", 0, 0)',
+            . 'VALUES (?, ?, ?, NOW(), ?, ?, ?, NOW(), ?, ?, 0, 0, "", 1, 0, "", 0, 0)',
             [
+                $docId,
                 'file_url',
                 $size,
                 'file:///' . _copilot_safe_storage_path($pid, $docUuid),
                 'application/pdf',
                 $pid,
                 $origName,
-                hash('sha256', $docUuid),  // Stable per-document hash; not the file content hash
+                hash('sha256', $docUuid),
             ],
         );
         $records['documents'] = ['ok' => true, 'id' => $docId];
@@ -415,9 +421,11 @@ function _copilot_writeback_lab_results(
 
     $resultIds = [];
     foreach ($results as $r) {
+        // `range` is a MariaDB reserved word — must be backticked, or
+        // the server returns "You have an error in your SQL syntax".
         $resultId = sqlInsert(
             'INSERT INTO procedure_result (procedure_report_id, result_code, '
-            . 'result_text, units, range, abnormal, result_status, result, comments) '
+            . 'result_text, units, `range`, abnormal, result_status, result, comments) '
             . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [
                 $reportId,
