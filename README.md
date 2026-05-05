@@ -9,7 +9,8 @@ for the Gauntlet AI Austin admission sprint.
 | [SETUP.md](SETUP.md) | Bring the stack up locally (`docker compose up -d`) |
 | [AUDIT.md](AUDIT.md) | Security / performance / architecture / data-quality / compliance audit of the OpenEMR codebase |
 | [USERS.md](USERS.md) | Target user (PCP, 20-patient day) and the use cases the agent addresses |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | The AI integration plan — verification, observability, failure modes, scaling |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Week 1 AI integration plan — verification, observability, failure modes, scaling |
+| [W2_ARCHITECTURE.md](W2_ARCHITECTURE.md) | **Week 2** multimodal evidence agent — schemas, vision pipeline, hybrid RAG, supervisor + worker graph, eval gate |
 
 **Deployed app:** https://openemr-production-0996.up.railway.app/
 
