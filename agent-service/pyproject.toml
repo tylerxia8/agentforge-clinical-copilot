@@ -22,6 +22,11 @@ dependencies = [
     # and Cohere come in via optional extras so the deploy can run
     # in a degraded BM25-only mode if those vendor keys are missing.
     "rank-bm25>=0.2.2",
+    # W2 — supervisor + worker orchestration. The graph wiring is
+    # contained to copilot.workers.graph; routing logic and node
+    # bodies live in pure-function modules so they remain testable
+    # without spinning up the LangGraph runtime.
+    "langgraph>=0.2",
 ]
 
 [project.optional-dependencies]
