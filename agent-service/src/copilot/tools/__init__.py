@@ -6,35 +6,40 @@ implement `run()`, return rows tagged with `_patient_uuid`.
 
 To wire up: add the tool class to `ALL_TOOLS` below.
 
-TODO(thursday): implement these tools (each will mirror the medications
-pattern, just hitting a different REST endpoint):
-- GetActiveProblemsTool
-- GetAllergiesTool
-- GetRecentEncountersTool
-- GetLabHistoryTool
-- GetVitalHistoryTool
-- GetImmunizationsTool
-- GetPreventiveCareDueTool
-- GetTodayScheduleTool   (provider-scoped, not patient-scoped)
-- GetPatientSummaryTool  (composite — calls others)
+Currently wired (W2 review feedback closed labs/vitals/immunizations):
+
+- GetActiveMedicationsTool   /MedicationRequest
+- GetActiveProblemsTool      /Condition
+- GetAllergiesTool           /AllergyIntolerance
+- GetRecentEncountersTool    /Encounter
+- GetLabHistoryTool          /Observation?category=laboratory
+- GetVitalHistoryTool        /Observation?category=vital-signs
+- GetImmunizationsTool       /Immunization
+
+Deferred:
+
+- GetPreventiveCareDueTool   composite over guidelines + chart
+- GetTodayScheduleTool       provider-scoped, not patient-scoped
+- GetPatientSummaryTool      composite — calls others
 """
 
 from copilot.tools.allergies import GetAllergiesTool
 from copilot.tools.base import Tool, ToolResult
 from copilot.tools.encounters import GetRecentEncountersTool
+from copilot.tools.immunizations import GetImmunizationsTool
+from copilot.tools.labs import GetLabHistoryTool
 from copilot.tools.medications import GetActiveMedicationsTool
 from copilot.tools.problems import GetActiveProblemsTool
+from copilot.tools.vitals import GetVitalHistoryTool
 
 ALL_TOOLS: list[Tool] = [
     GetActiveMedicationsTool(),
     GetActiveProblemsTool(),
     GetAllergiesTool(),
     GetRecentEncountersTool(),
-    # Add others here as they're implemented:
-    # GetVitalHistoryTool — blocked: /Observation 500s on seeded
-    #   form_vitals, FHIR mapping issue to diagnose locally.
-    # GetLabHistoryTool — same /Observation issue.
-    # GetImmunizationsTool, GetTodayScheduleTool — Sunday stretch.
+    GetLabHistoryTool(),
+    GetVitalHistoryTool(),
+    GetImmunizationsTool(),
 ]
 
 

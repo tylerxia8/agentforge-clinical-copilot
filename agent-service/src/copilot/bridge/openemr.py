@@ -168,10 +168,25 @@ class OpenEMRBridge:
         bundle = await self._fhir_get("/Encounter", {"patient": patient_uuid})
         return self._entries(bundle)
 
-    # Stubs to mirror the pattern above — fill in once their tools are
-    # wired:
-    #
-    # async def get_observations(self, patient_uuid):     /Observation (vitals + labs)
-    # async def get_immunizations(self, patient_uuid):    /Immunization
-    # async def get_observations(self, patient_uuid):     /Observation (vitals + labs)
-    # async def get_immunizations(self, patient_uuid):    /Immunization
+    async def get_observations(
+        self,
+        patient_uuid: str,
+        *,
+        category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """FHIR Observation — labs (category=laboratory) and vitals
+        (category=vital-signs). The OpenEMR FHIR endpoint accepts a
+        `category` search parameter and filters server-side; if it's
+        omitted we fetch everything and let the tool layer filter.
+        """
+        params: dict[str, Any] = {"patient": patient_uuid}
+        if category:
+            params["category"] = category
+        bundle = await self._fhir_get("/Observation", params)
+        return self._entries(bundle)
+
+    async def get_immunizations(self, patient_uuid: str) -> list[dict[str, Any]]:
+        """FHIR Immunization — vaccine history. Tool layer surfaces
+        most-recent-first and tags each row with a citation id."""
+        bundle = await self._fhir_get("/Immunization", {"patient": patient_uuid})
+        return self._entries(bundle)

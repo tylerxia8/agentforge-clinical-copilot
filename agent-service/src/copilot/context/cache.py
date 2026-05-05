@@ -57,22 +57,33 @@ class ContextCache:
 
         from copilot.tools.allergies import GetAllergiesTool
         from copilot.tools.encounters import GetRecentEncountersTool
+        from copilot.tools.immunizations import GetImmunizationsTool
+        from copilot.tools.labs import GetLabHistoryTool
         from copilot.tools.medications import GetActiveMedicationsTool
         from copilot.tools.problems import GetActiveProblemsTool
+        from copilot.tools.vitals import GetVitalHistoryTool
 
         args = {"patient_uuid": ctx.patient_uuid}
-        meds_task = GetActiveMedicationsTool().run(ctx, args)
-        problems_task = GetActiveProblemsTool().run(ctx, args)
-        allergies_task = GetAllergiesTool().run(ctx, args)
-        encounters_task = GetRecentEncountersTool().run(ctx, {**args, "limit": 5})
-
-        results = await asyncio.gather(
-            meds_task, problems_task, allergies_task, encounters_task,
-            return_exceptions=True,
+        # Order in this list MUST match `keys` below — we zip them.
+        # Limits chosen to keep the warmed bundle under ~50 KB JSON
+        # for the typical chart so Redis I/O stays cheap.
+        tasks = [
+            GetActiveMedicationsTool().run(ctx, args),
+            GetActiveProblemsTool().run(ctx, args),
+            GetAllergiesTool().run(ctx, args),
+            GetRecentEncountersTool().run(ctx, {**args, "limit": 5}),
+            GetLabHistoryTool().run(ctx, {**args, "limit": 25}),
+            GetVitalHistoryTool().run(ctx, {**args, "limit": 10}),
+            GetImmunizationsTool().run(ctx, {**args, "limit": 10}),
+        ]
+        keys = (
+            "medications", "problems", "allergies", "encounters",
+            "labs", "vitals", "immunizations",
         )
 
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
         bundle: dict[str, Any] = {"patient_uuid": ctx.patient_uuid}
-        keys = ("medications", "problems", "allergies", "encounters")
         for key, result in zip(keys, results, strict=True):
             if isinstance(result, Exception):
                 logger.warning("warm: %s failed: %s", key, result)
@@ -83,12 +94,16 @@ class ContextCache:
         await self.put(ctx.patient_uuid, bundle)
         logger.info(
             "warmed context for patient_uuid=%s "
-            "(meds=%d, problems=%d, allergies=%d, encounters=%d)",
+            "(meds=%d, problems=%d, allergies=%d, encounters=%d, "
+            "labs=%d, vitals=%d, immunizations=%d)",
             ctx.patient_uuid,
             len(bundle["medications"]["rows"]),
             len(bundle["problems"]["rows"]),
             len(bundle["allergies"]["rows"]),
             len(bundle["encounters"]["rows"]),
+            len(bundle["labs"]["rows"]),
+            len(bundle["vitals"]["rows"]),
+            len(bundle["immunizations"]["rows"]),
         )
 
     async def get_or_warm(self, ctx: PatientContext) -> dict[str, Any]:
