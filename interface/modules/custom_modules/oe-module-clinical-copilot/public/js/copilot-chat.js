@@ -14,6 +14,7 @@
     if (!panel) return;
 
     const endpoint = panel.dataset.endpoint;
+    const uploadEndpoint = panel.dataset.uploadEndpoint;
     const csrf = panel.dataset.csrf;
     const patientPid = panel.dataset.patientPid;
     const messagesEl = document.getElementById("copilot-messages");
@@ -21,6 +22,7 @@
     const input = document.getElementById("copilot-input");
     const closeBtn = panel.querySelector(".copilot-close");
     const suggestionsEl = document.getElementById("copilot-suggestions");
+    const attachInput = document.getElementById("copilot-attach-input");
 
     // Patient-scoped history. If the user navigates to a different chart
     // and the panel is re-rendered for a new pid, the old in-memory
@@ -40,6 +42,155 @@
             form.requestSubmit();
         });
     });
+
+    attachInput?.addEventListener("change", async () => {
+        const file = attachInput.files?.[0];
+        if (!file) return;
+        // Reset the input so the same file can be re-attached if the
+        // user undoes the upload.
+        attachInput.value = "";
+        await handleUpload(file);
+    });
+
+    async function handleUpload(file) {
+        if (!uploadEndpoint) {
+            appendMessage("assistant", "Upload not available — admin needs to redeploy.", { error: true });
+            return;
+        }
+        if (file.type && file.type !== "application/pdf") {
+            appendMessage("assistant", `Only PDF uploads are supported. Got ${file.type}.`, { error: true });
+            return;
+        }
+        if (file.size > 25 * 1024 * 1024) {
+            appendMessage("assistant", "File exceeds the 25 MB upload cap.", { error: true });
+            return;
+        }
+        if (pending) {
+            appendMessage("assistant", "A request is already in flight; please wait.", { error: true });
+            return;
+        }
+        if (suggestionsEl && !suggestionsEl.hidden) suggestionsEl.hidden = true;
+
+        const docType = await pickDocType(file.name);
+        if (!docType) return;  // user cancelled
+
+        appendMessage("user", `📎 ${file.name} (${formatBytes(file.size)}) — ${labelForDocType(docType)}`);
+        const thinkingEl = appendMessage("assistant", "Reading the document…", { ephemeral: true });
+        pending = true;
+
+        try {
+            const fd = new FormData();
+            fd.append("file", file);
+            fd.append("doc_type", docType);
+
+            const response = await fetch(uploadEndpoint, {
+                method: "POST",
+                headers: { "X-CSRF-Token": csrf },
+                body: fd,
+            });
+
+            thinkingEl.remove();
+
+            if (!response.ok) {
+                const errBody = await response.json().catch(() => ({}));
+                appendMessage(
+                    "assistant",
+                    errBody.error || `Upload failed (HTTP ${response.status}).`,
+                    { error: true },
+                );
+                return;
+            }
+
+            const body = await response.json();
+            renderExtraction(body);
+        } catch (err) {
+            thinkingEl.remove();
+            appendMessage("assistant", "Network error during upload.", { error: true });
+            console.error("[copilot upload]", err);
+        } finally {
+            pending = false;
+            input.focus();
+        }
+    }
+
+    function pickDocType(filename) {
+        // Cheap heuristic: filename hint, fall back to a quick prompt.
+        const lower = filename.toLowerCase();
+        if (lower.includes("intake") || lower.includes("registration") || lower.includes("history")) {
+            return Promise.resolve("intake_form");
+        }
+        if (lower.includes("lab") || lower.includes("result") || lower.includes("panel") || lower.includes("cbc") || lower.includes("cmp")) {
+            return Promise.resolve("lab_pdf");
+        }
+        // Default to lab_pdf with a 1-question confirm. The window.confirm
+        // is intentional — uploads are rare enough that a hard interruption
+        // is fine, and a richer modal is Sunday polish, not MVP.
+        const isLab = window.confirm(
+            "Is this a lab report PDF?\n\n" +
+            "OK = Lab report\nCancel = Patient intake form"
+        );
+        return Promise.resolve(isLab ? "lab_pdf" : "intake_form");
+    }
+
+    function labelForDocType(docType) {
+        return docType === "lab_pdf" ? "lab report" : "intake form";
+    }
+
+    function formatBytes(bytes) {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function renderExtraction(body) {
+        const docType = body.doc_type || "lab_pdf";
+        const ex = body.extraction || {};
+        const bbox = body.bbox_match || {};
+        const lines = [];
+
+        if (docType === "lab_pdf") {
+            const results = ex.results || [];
+            const warnings = ex.warnings || [];
+            lines.push(`**Extracted ${results.length} lab result${results.length === 1 ? "" : "s"}**`);
+            for (const r of results.slice(0, 12)) {
+                const flag = r.abnormal_flag && r.abnormal_flag !== "N" ? ` (${r.abnormal_flag})` : "";
+                const conf = r.extraction_confidence === "low" ? " ⚠ low confidence" : "";
+                lines.push(`- ${r.test_name}: ${r.value} ${r.unit}${flag}${conf}`);
+            }
+            if (results.length > 12) lines.push(`- …and ${results.length - 12} more`);
+            for (const w of warnings) lines.push(`- ⚠ ${w}`);
+        } else {
+            const meds = ex.medications || [];
+            const allergies = ex.allergies || [];
+            const fam = ex.family_history || [];
+            const warnings = ex.warnings || [];
+            lines.push(`**Extracted intake form**`);
+            if (ex.demographics) {
+                const d = ex.demographics;
+                lines.push(`- Patient: ${d.first_name} ${d.last_name}${d.date_of_birth ? ` (DOB ${d.date_of_birth})` : ""}`);
+            }
+            if (ex.chief_concern?.text) lines.push(`- Chief concern: ${ex.chief_concern.text}`);
+            if (meds.length) lines.push(`- Medications: ${meds.length}`);
+            if (allergies.length) lines.push(`- Allergies: ${allergies.length}`);
+            if (fam.length) lines.push(`- Family history entries: ${fam.length}`);
+            for (const w of warnings) lines.push(`- ⚠ ${w}`);
+        }
+
+        if (bbox.walked) {
+            lines.push("");
+            lines.push(`*Source bbox match: ${bbox.matched}/${bbox.walked} citations.*`);
+        }
+
+        appendMessage("assistant", lines.join("\n"));
+
+        // Prefill the input with a follow-up so the user can ask a
+        // question about the freshly-extracted document with one click.
+        const followup = docType === "lab_pdf"
+            ? "Anything I should follow up on from these results?"
+            : "Quick read on this patient using what's now in the chart.";
+        input.value = followup;
+        input.focus();
+    }
 
     form.addEventListener("submit", async (ev) => {
         ev.preventDefault();

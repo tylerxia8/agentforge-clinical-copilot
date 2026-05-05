@@ -59,9 +59,10 @@ final class PatientViewedListener
             return;
         }
 
-        // CSRF token the panel will include on every chat POST.
+        // CSRF token the panel will include on every chat / upload POST.
         $csrf = CsrfUtils::collectCsrfToken();
         $endpoint = $this->installPath . '/public/chat.php';
+        $uploadEndpoint = $this->installPath . '/public/upload.php';
         $patientName = $this->lookupPatientName($pid);
 
         // Default starter prompts the doctor can click instead of typing.
@@ -78,6 +79,7 @@ final class PatientViewedListener
         ?>
         <link rel="stylesheet" href="<?= htmlspecialchars($this->installPath . '/public/css/copilot-panel.css', ENT_QUOTES) ?>">
         <div id="copilot-panel" data-endpoint="<?= htmlspecialchars($endpoint, ENT_QUOTES) ?>"
+             data-upload-endpoint="<?= htmlspecialchars($uploadEndpoint, ENT_QUOTES) ?>"
              data-csrf="<?= htmlspecialchars($csrf, ENT_QUOTES) ?>"
              data-patient-pid="<?= htmlspecialchars((string) $pid, ENT_QUOTES) ?>"
              data-patient-name="<?= htmlspecialchars($patientName, ENT_QUOTES) ?>"
@@ -100,6 +102,15 @@ final class PatientViewedListener
                 </div>
             </div>
             <form class="copilot-input-row" id="copilot-form" autocomplete="off">
+                <label class="copilot-attach" title="Attach a lab PDF or intake form">
+                    <input
+                        type="file"
+                        id="copilot-attach-input"
+                        accept="application/pdf,.pdf"
+                        hidden
+                    />
+                    <span aria-hidden="true">📎</span>
+                </label>
                 <input
                     type="text"
                     id="copilot-input"

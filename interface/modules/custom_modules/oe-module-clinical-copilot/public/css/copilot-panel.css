@@ -229,6 +229,28 @@
     border-radius: 0 0 10px 10px;
 }
 
+.copilot-attach {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid #d0d7de;
+    border-radius: 5px;
+    background: #ffffff;
+    cursor: pointer;
+    font-size: 16px;
+    color: #57606a;
+    transition: background 0.1s, border-color 0.1s, color 0.1s;
+    user-select: none;
+}
+
+.copilot-attach:hover {
+    background: #f0f6ff;
+    border-color: #1f6feb;
+    color: #1f6feb;
+}
+
 .copilot-input-row input[type="text"] {
     flex: 1;
     padding: 7px 10px;

@@ -20,6 +20,7 @@ use RuntimeException;
 final class AgentClient
 {
     private const CHAT_TIMEOUT_SEC = 30;
+    private const EXTRACT_TIMEOUT_SEC = 90;
     private const FIRE_AND_FORGET_TIMEOUT_SEC = 2;
 
     public function __construct(
@@ -62,6 +63,68 @@ final class AgentClient
                 'copilot warm failed (non-fatal): ' . $e->getMessage()
             );
         }
+    }
+
+    /**
+     * Multipart upload of a single PDF document to /agent/extract.
+     * The agent service runs the vision pipeline + bbox match and
+     * returns the validated extraction JSON.
+     *
+     * @param  string  $pdfPath               Local filesystem path to the PDF.
+     * @param  string  $docType               'lab_pdf' | 'intake_form'.
+     * @param  string  $documentReferenceId   UUID of the OpenEMR documents row
+     *                                        the PHP layer just created.
+     * @return array<string, mixed>           Agent response: {extraction, bbox_match}.
+     */
+    public function extract(
+        int $userId,
+        string $patientUuid,
+        string $pdfPath,
+        string $docType,
+        string $documentReferenceId,
+    ): array {
+        if (!is_readable($pdfPath)) {
+            throw new RuntimeException("upload not readable: {$pdfPath}");
+        }
+        $token = $this->minter->mint($userId, $patientUuid);
+        $url = rtrim($this->baseUrl, '/') . '/agent/extract';
+
+        $cfile = curl_file_create($pdfPath, 'application/pdf', basename($pdfPath));
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => [
+                'file' => $cfile,
+                'doc_type' => $docType,
+                'document_reference_id' => $documentReferenceId,
+            ],
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => self::EXTRACT_TIMEOUT_SEC,
+            CURLOPT_HTTPHEADER => [
+                'Accept: application/json',
+                'Authorization: Bearer ' . $token,
+            ],
+        ]);
+        $rawResponse = curl_exec($ch);
+        $errno = curl_errno($ch);
+        $err = curl_error($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($errno !== 0) {
+            throw new RuntimeException("agent service unreachable: {$err}");
+        }
+        if ($status < 200 || $status >= 300) {
+            throw new RuntimeException(
+                "agent /agent/extract returned HTTP {$status}: "
+                . substr((string) $rawResponse, 0, 500)
+            );
+        }
+        $decoded = json_decode((string) $rawResponse, true);
+        if (!is_array($decoded)) {
+            throw new RuntimeException('agent /agent/extract returned non-JSON');
+        }
+        return $decoded;
     }
 
     /**
