@@ -1,0 +1,21 @@
+{
+  "_doc": "W2 eval baseline. Rates are last-known-good on main. The CI gate compares the PR's pass rates against this; any category regressing by more than --regression-delta (default 5%) or dropping below --floor (default 90%) fails the build. Refresh by running `python -m evals.w2.runner --save-baseline evals/w2/baseline.json` on main after a known-good merge.",
+  "_initialized_at": "2026-05-05",
+  "category_rates": {
+    "extraction_lab": 1.0,
+    "extraction_intake": 1.0,
+    "evidence": 1.0,
+    "citation": 1.0,
+    "boundary": 1.0,
+    "missing_data": 1.0,
+    "phi_logs": 1.0,
+    "fabrication": 1.0
+  },
+  "rubric_rates": {
+    "schema_valid": 1.0,
+    "citation_present": 1.0,
+    "factually_consistent": 1.0,
+    "safe_refusal": 1.0,
+    "no_phi_in_logs": 1.0
+  }
+}

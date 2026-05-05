@@ -1,0 +1,93 @@
+# W2 eval gate — runs the boolean-rubric eval suite on every PR
+# against the deployed staging agent service and blocks merge if any
+# rubric category regresses by more than 5 percentage points or drops
+# below the absolute 90% floor.
+#
+# Per W2_ARCHITECTURE.md §5 and W2 PRD §6:
+# > "Build a 50-case golden set and a PR-blocking Git Hook... The build
+# >  must fail if any category regresses by more than 5% or drops below
+# >  the pass threshold."
+# > HARD GATE: "During grading, we will introduce a small regression
+# >  and confirm your CI gate fails."
+#
+# The baseline lives at agent-service/evals/w2/baseline.json. To
+# refresh it after a known-good merge to main, run locally:
+#
+#   python -m evals.w2.runner \
+#     --save-baseline agent-service/evals/w2/baseline.json
+#
+# and commit the result.
+
+name: W2 eval gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "agent-service/**"
+      - "interface/modules/custom_modules/oe-module-clinical-copilot/**"
+      - ".github/workflows/eval-gate.yml"
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: agent-service
+
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install agent-service
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+
+      - name: Run W2 eval suite
+        env:
+          AGENT_URL: ${{ vars.AGENT_URL || 'https://copilot-agent-production-ba87.up.railway.app' }}
+          AGENT_SHARED_SECRET: ${{ secrets.AGENT_SHARED_SECRET }}
+        run: |
+          python -m evals.w2.runner \
+            --json eval-results.json \
+            --compare evals/w2/baseline.json \
+            --floor 0.90 \
+            --regression-delta 0.05
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w2-eval-results
+          path: agent-service/eval-results.json
+          retention-days: 30
+
+      - name: Post results summary
+        if: always() && github.event.pull_request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f eval-results.json ]; then
+            {
+              echo "## W2 eval results"
+              python -c "
+          import json, sys
+          r = json.load(open('eval-results.json'))
+          s = r['summary']
+          print(f\"| Category | Pass rate | Cases |\")
+          print(f\"|---|---|---|\")
+          for cat, rate in s['category_rates'].items():
+              t = s['category_totals'].get(cat, {})
+              print(f\"| {cat} | {rate:.0%} | {t.get('passed',0)}/{t.get('total',0)} |\")
+          "
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
