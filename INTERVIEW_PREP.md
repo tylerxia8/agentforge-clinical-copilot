@@ -361,3 +361,121 @@ These aren't on the case study sheet but are obvious:
 - **Don't apologize for what's not built.** The case study is
   explicit that the MVP is the *foundation*, not a working agent.
   Frame Thursday work as the next milestone, not a gap.
+
+---
+
+# Week 2 interview prep
+
+W2 expanded the agent in three orthogonal directions: vision (read
+PDFs), retrieval (RAG over a guideline corpus), and orchestration
+(supervisor + 2 workers in LangGraph). The questions a grader is
+likely to drill on, with crisp answers.
+
+## "How does the vision pipeline avoid hallucinated citations?"
+
+The vision model is allowed to emit `quote_or_value` (the literal
+text it claims to have read) but NOT bbox coordinates or document
+UUIDs — those are stripped from the tool's input_schema before the
+call (`extraction/vision.py:build_extraction_tool_schema`). After
+Anthropic returns, we hydrate the document UUID server-side and
+run a **pdfplumber match step** on every claimed quote: if the
+quote can't be found in the page's word list within an edit-distance
+budget, the field is demoted to `extraction_confidence="low"` and
+flagged for operator review rather than asserted to the chart.
+Coordinates come exclusively from pdfplumber, never from the model.
+
+## "What's the supervisor doing differently from a chain?"
+
+It's a heuristic router, not an LLM call: tokens like `uspstf`,
+`recommend`, `screen`, `should` flip routing to the
+`evidence_retriever`; an attached document flips to `intake_extractor`;
+otherwise straight to `answer`. Three reasons it isn't LLM-based:
+(1) determinism for the eval gate — a guideline-shaped question
+must ALWAYS go through evidence retrieval, not 80% of the time;
+(2) ~2-3s latency saved per turn vs an LLM-supervisor; (3)
+testability — `route_decision()` is 30 lines of pure-python with
+16 unit tests. The hop counter caps at 5 to break loops.
+
+## "Walk me through one chat turn end-to-end."
+
+```
+PHP receives JSON → mints HMAC bearer → POST /agent/chat
+  → FastAPI verifies token + extracts patient_uuid
+  → graph.ainvoke(initial_state)
+    → supervisor_node: route_decision({...}) → "answer" (or evidence first)
+    → answer_node: composes W1 Orchestrator with augmented prompt
+      → ContextCache.get_or_warm() reads/builds 7-tool bundle from Redis
+      → Pre-populate seen_tool_results from bundle (verifier sees the rows)
+      → TokenMap.tokenize_dict(bundle) → [PT_NAME_1] etc
+      → Anthropic Messages call with tool defs + history + augmented user msg
+      → tool-use loop: dispatch each tool through patient_context middleware
+        → middleware compares tool args' patient_uuid vs ctx.patient_uuid
+          → fail-closed if mismatch (CrossPatientAccessError)
+      → Verify final_text against seen_tool_results
+        → retry up to 2 if verification fails
+        → fall back to verified-facts-only if verifier still fails
+      → TokenMap.rehydrate(final_text)
+  → ChatResponse JSON
+  ← back through the graph, supervisor → END
+PHP receives JSON, panel renders markdown + citation chips
+```
+
+The critical security step is the middleware comparing args'
+patient_uuid against ctx — every tool call passes through, none
+can be configured to skip it.
+
+## "How does the eval gate work, and how do you know it has teeth?"
+
+63 cases × 5 boolean rubrics (schema_valid, citation_present,
+factually_consistent, safe_refusal, no_phi_in_logs). The runner
+fires every case against the deployed staging, aggregates per-
+category pass rates, compares against `baseline.json`. Fails if
+any category drops by >5pp OR below the absolute 90% floor.
+PR-blocking GitHub Action.
+
+Teeth: there's a unit test (`test_eval_runner.py:test_synthetic_regression_canary`)
+that constructs a baseline-with-regression scenario (a broken
+citation regex fails 1 of 8 extraction_lab cases = 12.5pp drop)
+and asserts the comparison logic flags it. The PRD's hard-gate
+scenario is locked in by that test independent of any specific
+GitHub Actions run.
+
+## "What about adversarial users? You have boundary cases — what about jailbreaks?"
+
+Beyond boundary cases (cross-patient, prompt injection, write
+attempts), W2 added 7 adversarial probes: DAN-style role-play,
+fake-sysadmin authority impersonation, hypothetical framing,
+system-prompt extraction, tool-spec poisoning (asking for a tool
+that doesn't exist), citation forgery (asking to confirm a
+fabricated UUID), and a multi-turn slow-boil escalation. Each
+asserts the agent doesn't leak any forbidden term. The structural
+verifier is the backbone — even when the model wobbles in prose,
+the verifier rejects any response that asserts a non-existent row,
+which is the failure mode all of these probes try to engineer.
+
+## "Where would you spend your next week of engineering?"
+
+Three specific bets:
+
+1. **Critic worker** (PRD extension, not core). A small `claim_critic`
+   re-reads each cited source and asks "does the cited quote actually
+   contain the asserted fact?". Today the structural verifier checks
+   that a citation EXISTS; the critic checks the citation is FAITHFUL.
+2. **Multi-vector retrieval (ColQwen2)** once the corpus grows past
+   ~500 chunks. BM25 + Voyage gets us to ~25% retrieval improvement
+   from rerank; multi-vector takes the next step.
+3. **JWT OAuth with JWKS** for the FHIR bridge. We're on Password
+   Grant against a service account today; documented in AUDIT.md
+   as a v2 swap. ~1 day to wire including key rotation.
+
+## What to bring to the W2 interview
+
+- The W1 prep material above.
+- [W2_ARCHITECTURE.md](W2_ARCHITECTURE.md) and [W2_COSTS.md](W2_COSTS.md) open.
+- The Railway URLs, ready to share-screen — both the OpenEMR chart
+  and the Langfuse trace dashboard (so you can show per-call
+  cost_details + cache token breakouts on a fresh trace).
+- The deployed eval-gate CI run (a regression-canary PR if you've
+  built one) ready to demo as the "graders inject a regression"
+  proof.
+- This document on a second screen.

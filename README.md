@@ -11,6 +11,9 @@ for the Gauntlet AI Austin admission sprint.
 | [USERS.md](USERS.md) | Target user (PCP, 20-patient day) and the use cases the agent addresses |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Week 1 AI integration plan — verification, observability, failure modes, scaling |
 | [W2_ARCHITECTURE.md](W2_ARCHITECTURE.md) | **Week 2** multimodal evidence agent — schemas, vision pipeline, hybrid RAG, supervisor + worker graph, eval gate |
+| [COSTS.md](COSTS.md) | W1 cost & scale projections (100 → 100K users) |
+| [W2_COSTS.md](W2_COSTS.md) | **Week 2** cost & latency report — vision/RAG deltas, p50/p95, bottleneck analysis |
+| [DEMO_SCRIPT.md](DEMO_SCRIPT.md) / [W2_DEMO_SCRIPT.md](W2_DEMO_SCRIPT.md) | W1 / W2 demo video scripts |
 
 **Deployed app:** https://openemr-production-0996.up.railway.app/
 
