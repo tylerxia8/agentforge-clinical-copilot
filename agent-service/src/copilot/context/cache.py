@@ -37,11 +37,17 @@ class ContextCache:
             return None
         return json.loads(raw)
 
-    async def put(self, patient_uuid: str, bundle: dict[str, Any]) -> None:
+    async def put(
+        self,
+        patient_uuid: str,
+        bundle: dict[str, Any],
+        *,
+        ttl_override: int | None = None,
+    ) -> None:
         await self._conn().set(
             _bundle_key(patient_uuid),
             json.dumps(bundle),
-            ex=settings.context_cache_ttl_seconds,
+            ex=ttl_override if ttl_override is not None else settings.context_cache_ttl_seconds,
         )
 
     async def warm(self, ctx: PatientContext) -> None:
@@ -84,14 +90,35 @@ class ContextCache:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         bundle: dict[str, Any] = {"patient_uuid": ctx.patient_uuid}
+        failure_count = 0
         for key, result in zip(keys, results, strict=True):
             if isinstance(result, Exception):
                 logger.warning("warm: %s failed: %s", key, result)
                 bundle[key] = {"rows": [], "warnings": [f"{key} fetch failed: {result}"]}
+                failure_count += 1
             else:
                 bundle[key] = result.model_dump()
 
-        await self.put(ctx.patient_uuid, bundle)
+        # Don't poison the cache with an all-empty bundle. If every tool
+        # failed (transient OpenEMR 502 / OAuth blip), skip the write so
+        # the next chat turn retries fresh instead of getting the empty
+        # bundle from Redis for the full TTL. Manifested in W2 calibration
+        # as golden / multistep stuck at 0% even after the live agent
+        # recovered: the eval runs ~63 cases sequentially through a single
+        # patient context, and a brief 502 mid-run poisoned Farrah's
+        # cached bundle for the remaining 5 minutes.
+        if failure_count == len(keys):
+            logger.warning(
+                "warm: all %d tools failed for patient_uuid=%s — "
+                "skipping cache write so next call retries",
+                len(keys), ctx.patient_uuid,
+            )
+            return
+        # Partial-success bundles get a much shorter TTL (10s) so we
+        # retry the failed slots soon, but still serve the successful
+        # ones during that window.
+        ttl_override = 10 if failure_count > 0 else None
+        await self.put(ctx.patient_uuid, bundle, ttl_override=ttl_override)
         logger.info(
             "warmed context for patient_uuid=%s "
             "(meds=%d, problems=%d, allergies=%d, encounters=%d, "
@@ -112,5 +139,21 @@ class ContextCache:
             return existing
         await self.warm(ctx)
         warmed = await self.get(ctx.patient_uuid)
-        assert warmed is not None
-        return warmed
+        if warmed is not None:
+            return warmed
+        # warm() declined to cache (every tool failed). Return an empty
+        # bundle for this turn — the orchestrator's verifier will refuse
+        # rather than hallucinate, and the NEXT turn will retry warm().
+        # Mirrors the shape of a healthy bundle so downstream code that
+        # dict-accesses keys doesn't crash.
+        empty_slot = {"rows": [], "warnings": ["bundle warm failed; will retry next turn"]}
+        return {
+            "patient_uuid": ctx.patient_uuid,
+            "medications": dict(empty_slot),
+            "problems":     dict(empty_slot),
+            "allergies":    dict(empty_slot),
+            "encounters":   dict(empty_slot),
+            "labs":         dict(empty_slot),
+            "vitals":       dict(empty_slot),
+            "immunizations": dict(empty_slot),
+        }
