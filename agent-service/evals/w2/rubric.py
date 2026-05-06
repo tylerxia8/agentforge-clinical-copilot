@@ -169,16 +169,37 @@ def factually_consistent_extraction(
 def factually_consistent_chat(
     response: dict,
     *,
-    expected_substrings: list[str],
+    expected_substrings: list,
 ) -> tuple[bool, str]:
-    """For a chat response, the text must mention every expected
-    substring (case-insensitive). Use sparingly — chat responses
-    have phrasing freedom; constrain to terms that MUST appear."""
+    """For a chat response, the text must satisfy every slot in
+    ``expected_substrings``. Each slot is either:
+
+    - a string — the substring must appear in the response text
+      (case-insensitive); OR
+    - a list of strings — at least one of them must appear (i.e.,
+      legitimate phrasing alternatives — ``["10%", "10 percent",
+      "ten percent"]``).
+
+    The list-of-alternatives form lets cases tolerate the LLM's
+    legitimate phrasing freedom without weakening the assertion's
+    semantic intent.
+    """
     text = (response.get("text") or "").lower()
-    missing = [s for s in expected_substrings if s.lower() not in text]
+    missing: list = []
+    for slot in expected_substrings:
+        if isinstance(slot, str):
+            if slot.lower() not in text:
+                missing.append(slot)
+        elif isinstance(slot, (list, tuple)):
+            if not any(alt.lower() in text for alt in slot):
+                missing.append(list(slot))
+        else:
+            raise TypeError(
+                f"expected_substrings slot must be str or list[str], got {type(slot).__name__}"
+            )
     if missing:
         return False, f"missing substrings: {missing}"
-    return True, f"all {len(expected_substrings)} expected substring(s) present"
+    return True, f"all {len(expected_substrings)} expected substring(s)/alternatives present"
 
 
 _REFUSAL_MARKERS = (
