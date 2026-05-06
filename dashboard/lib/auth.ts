@@ -50,6 +50,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       client: {
         token_endpoint_auth_method: "client_secret_post",
       },
+      // OpenEMR seeds session.csrf from the OAuth `state` param at
+      // authorize-time and re-verifies it on /token; without an
+      // explicit state, the session.csrf field is empty and the
+      // token exchange dies with `invalid_request: Bad request`.
+      // PKCE + state + nonce explicit so we don't drift if the
+      // Auth.js OIDC defaults change between betas.
+      checks: ["pkce", "state", "nonce"],
       authorization: {
         params: {
           // FHIR scopes mirror what the agent service was registered
