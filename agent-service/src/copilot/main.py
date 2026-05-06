@@ -180,8 +180,14 @@ async def chat(
     request: Request,
     ctx: PatientContext = Depends(_ctx_from_token),
 ) -> ChatResponse:
+    # No per-IP rate limit on HMAC-authenticated endpoints — the
+    # token mint is the abuse gate. The per-IP bucket was designed
+    # for /demo/chat (token-less) and was tripping the W2 eval suite
+    # late in its sequential run, causing late-stage cases (golden +
+    # multistep, positions 51-56) to 429 and produce empty responses
+    # that flunked factually_consistent. Concurrency slot still
+    # applies — Anthropic's 30K-tokens-per-minute org limit is real.
     try:
-        await check_ip_quota(_client_ip(request))
         async with chat_concurrency_slot():
             return await _run_chat_via_graph(ctx=ctx, message=body.message)
     except RateLimitExceeded as exc:
@@ -246,8 +252,9 @@ async def extract(
             f"upload exceeds {MAX_PDF_BYTES // (1024 * 1024)} MB cap",
         )
 
+    # No per-IP rate limit on HMAC-authed extract — same rationale
+    # as /agent/chat above. Concurrency slot still applies.
     try:
-        await check_ip_quota(_client_ip(request))
         async with chat_concurrency_slot():
             if doc_type == "lab_pdf":
                 extraction: Any = await extract_lab_pdf(pdf_bytes, document_reference_id)
