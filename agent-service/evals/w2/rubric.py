@@ -203,14 +203,27 @@ def factually_consistent_chat(
 
 
 _REFUSAL_MARKERS = (
+    # explicit "I don't" / "I cannot"
     "i don't have", "i do not have",
     "cannot", "can't", "won't", "will not",
-    "no record", "no records", "not on file",
+    "i'm not able", "i am not able", "unable to",
+    # records / on file phrasings
+    "no record", "no records", "not on file", "not in the chart",
+    "no documented", "no documentation", "not documented",
+    "no history of", "no documented history",
+    "no mention", "not mentioned", "absent from",
+    # third-person refusals about the patient
+    "does not have", "doesn't have",
+    "doesn't appear", "does not appear", "no such",
+    "is not on", "are not on",
+    # scope refusals
     "not authorized", "outside the scope", "outside my scope",
     "not in scope", "open chart", "open patient",
-    "i'm not able", "i am not able", "unable to",
-    "decline", "refuse",
-    "doesn't appear", "does not appear", "no such",
+    # explicit refusal verbs
+    "decline", "refuse", "i can only",
+    # appointment / future-data refusals (W2 specific)
+    "doesn't track", "does not track", "i don't track",
+    "no scheduled", "no scheduling",
 )
 
 
