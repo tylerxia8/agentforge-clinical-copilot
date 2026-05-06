@@ -16,5 +16,32 @@
     "source_url": "https://diabetesjournals.org/care/issue/47/Supplement_1",
     "year": 2024,
     "text": "Perform a comprehensive foot evaluation at least annually to identify risk factors for ulcers and amputations. All patients with diabetes should have an initial dilated and comprehensive eye examination by an ophthalmologist or optometrist within 5 years after the onset of type 1 diabetes or at the time of diagnosis of type 2 diabetes. If there is no evidence of retinopathy and glycemia is well controlled, screening every 1 to 2 years is reasonable."
+  },
+  {
+    "chunk_id": "ada-bp-target-dm-2024",
+    "title": "Blood Pressure Targets in Adults with Diabetes",
+    "section": "Standards of Medical Care in Diabetes — Cardiovascular Disease and Risk Management",
+    "source": "ADA",
+    "source_url": "https://diabetesjournals.org/care/issue/47/Supplement_1",
+    "year": 2024,
+    "text": "For most adults with diabetes and hypertension, a blood pressure target of less than 130/80 mm Hg is appropriate if it can be safely attained. Pharmacologic therapy for patients with diabetes, hypertension, and albuminuria should include either an ACE inhibitor or an angiotensin receptor blocker at the maximum tolerated dose. Lifestyle modification — including weight loss when indicated, the DASH-style diet, sodium reduction, moderation of alcohol, and increased physical activity — is recommended for all patients with elevated blood pressure."
+  },
+  {
+    "chunk_id": "ada-glp1-sglt2-cardiorenal-2024",
+    "title": "Pharmacologic Therapy with Cardiovascular and Renal Benefit",
+    "section": "Standards of Medical Care in Diabetes — Pharmacologic Approaches to Glycemic Treatment",
+    "source": "ADA",
+    "source_url": "https://diabetesjournals.org/care/issue/47/Supplement_1",
+    "year": 2024,
+    "text": "In patients with type 2 diabetes and established atherosclerotic cardiovascular disease (ASCVD) or indicators of high cardiovascular risk, a GLP-1 receptor agonist with proven cardiovascular benefit is recommended as part of the comprehensive cardiovascular risk reduction regimen. In patients with type 2 diabetes and heart failure (preserved or reduced ejection fraction) or chronic kidney disease, an SGLT2 inhibitor with proven benefit in this population is recommended. These agents may be used independently of metformin and independently of A1C if the patient has a compelling indication."
+  },
+  {
+    "chunk_id": "ada-statin-asvd-2024",
+    "title": "Statin Therapy in Adults with Diabetes",
+    "section": "Standards of Medical Care in Diabetes — Cardiovascular Disease and Risk Management",
+    "source": "ADA",
+    "source_url": "https://diabetesjournals.org/care/issue/47/Supplement_1",
+    "year": 2024,
+    "text": "For patients with diabetes aged 40 to 75 years without atherosclerotic cardiovascular disease, moderate-intensity statin therapy is recommended in addition to lifestyle therapy. For patients with diabetes and established atherosclerotic cardiovascular disease, high-intensity statin therapy is recommended, with the addition of ezetimibe or a PCSK9 inhibitor if LDL cholesterol remains 70 mg/dL or higher on maximally tolerated statin."
   }
 ]

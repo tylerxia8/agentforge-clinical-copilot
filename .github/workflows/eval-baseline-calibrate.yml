@@ -5,19 +5,26 @@
 #      copilot-agent service.
 #   2. Saves the per-category + per-rubric pass rates to
 #      agent-service/evals/w2/baseline.json.
-#   3. Commits the (potentially changed) baseline.json back to main.
+#   3. Uploads the proposed baseline.json as a workflow artifact
+#      (`w2-proposed-baseline`) and renders the diff in the run summary.
+#      The operator inspects the numbers and commits the new baseline
+#      manually when satisfied.
+#
+# Why we don't auto-commit:
+#   The agentforge-clinical-copilot Railway service auto-deploys on
+#   every push to main, which creates a 60-90s 502 window. When the
+#   workflow auto-pushed the baseline, that window flunked the late-
+#   stage cases of the NEXT calibration run, locking in worse numbers
+#   each time. Manual commit breaks the loop.
 #
 # When to run:
 #   - After a known-good merge whose pass rates you want to lock in
 #     as the new floor for the eval-gate workflow.
-#   - The gate (.github/workflows/eval-gate.yml) compares each PR's
-#     rates against this baseline; without calibration, the seeded
-#     1.00-across-the-board baseline either silently passes (if the
-#     rates are also 1.00) or noisily fails (if any category is below
-#     the 0.90 floor).
 #
 # How to run:
-#   GitHub Actions tab -> "Calibrate W2 eval baseline" -> Run workflow
+#   GitHub Actions tab -> "Calibrate W2 eval baseline" -> Run workflow.
+#   When the run completes, download the `w2-proposed-baseline` artifact,
+#   replace agent-service/evals/w2/baseline.json locally, commit, push.
 #
 # Cost / wall time:
 #   ~$2.50 in Anthropic credits (63 cases through Claude Sonnet 4.6),
@@ -30,12 +37,12 @@ on:
   workflow_dispatch:
     inputs:
       note:
-        description: "Optional one-line note to append to the commit message"
+        description: "Optional one-line note to append to the run summary"
         required: false
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   calibrate:
@@ -51,7 +58,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -80,24 +86,37 @@ jobs:
           path: agent-service/eval-results.json
           retention-days: 90
 
-      - name: Commit + push calibrated baseline
-        # Skip the commit step if save-baseline didn't change the file
-        # (a clean re-run on identical rates produces an identical file).
+      - name: Upload proposed baseline + diff
+        # Don't auto-commit. Auto-pushing the baseline back to main on
+        # every run created a deploy loop: each commit retriggered the
+        # OpenEMR Railway deploy, which created a 60-90s 502 window
+        # that flunked the late-stage cases of the NEXT calibration.
+        # Instead, we surface the proposed baseline as an artifact +
+        # render the diff in the step summary; the operator commits it
+        # locally only when satisfied with the numbers.
+        if: always()
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add evals/w2/baseline.json
-          if git diff --cached --quiet; then
-            echo "baseline.json unchanged — nothing to commit"
-            exit 0
-          fi
-          MSG="chore(w2-eval): calibrate baseline from production run"
-          NOTE="${{ github.event.inputs.note }}"
-          if [ -n "$NOTE" ]; then
-            MSG="$MSG — $NOTE"
-          fi
-          git commit -m "$MSG"
-          git push origin main
+          {
+            echo
+            echo "### Proposed baseline.json (download artifact \`w2-proposed-baseline\` to commit)"
+            echo
+            echo '```diff'
+            if [ -f evals/w2/baseline.json ]; then
+              git diff --no-color -- evals/w2/baseline.json || true
+            else
+              echo "+ (new file)"
+              cat evals/w2/baseline.json 2>/dev/null || true
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload proposed baseline as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w2-proposed-baseline
+          path: agent-service/evals/w2/baseline.json
+          retention-days: 90
 
       - name: Post results summary
         if: always()

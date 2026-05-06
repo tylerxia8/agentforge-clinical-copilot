@@ -1,0 +1,29 @@
+[
+  {
+    "chunk_id": "aha-bp-target-2017",
+    "title": "Hypertension Definition, Classification, and Treatment Targets",
+    "section": "ACC/AHA Guideline for the Prevention, Detection, Evaluation, and Management of High Blood Pressure in Adults",
+    "source": "ACC/AHA",
+    "source_url": "https://www.ahajournals.org/doi/10.1161/HYP.0000000000000065",
+    "year": 2017,
+    "text": "The 2017 ACC/AHA guideline defines hypertension as systolic blood pressure of 130 mm Hg or higher or diastolic of 80 mm Hg or higher, with a treatment target of less than 130/80 mm Hg for most adults including those with diabetes, chronic kidney disease, or established cardiovascular disease. For Stage 1 hypertension (130-139/80-89 mm Hg) without these conditions, pharmacotherapy is recommended only if the 10-year ASCVD risk is 10% or greater; otherwise lifestyle modification is first-line. First-line pharmacologic options for primary hypertension include thiazide diuretics, calcium channel blockers, and ACE inhibitors or ARBs."
+  },
+  {
+    "chunk_id": "aha-cholesterol-2018",
+    "title": "Management of Blood Cholesterol",
+    "section": "ACC/AHA Guideline on the Management of Blood Cholesterol",
+    "source": "ACC/AHA",
+    "source_url": "https://www.ahajournals.org/doi/10.1161/CIR.0000000000000625",
+    "year": 2018,
+    "text": "For adults with established atherosclerotic cardiovascular disease (ASCVD), the 2018 ACC/AHA guideline recommends high-intensity statin therapy (atorvastatin 40-80 mg daily or rosuvastatin 20-40 mg daily) with the goal of reducing LDL cholesterol by 50% or more from baseline. For very-high-risk ASCVD patients whose LDL-C remains 70 mg/dL or higher on maximally tolerated statin therapy, ezetimibe is reasonable as the next add-on, followed by a PCSK9 inhibitor (evolocumab or alirocumab) if needed. For primary prevention in adults aged 40-75 with LDL-C 70-189 mg/dL and 10-year ASCVD risk of 7.5% or greater, moderate-intensity statin is recommended after a clinician-patient risk discussion."
+  },
+  {
+    "chunk_id": "aha-afib-anticoagulation-2023",
+    "title": "Stroke Prevention in Atrial Fibrillation",
+    "section": "ACC/AHA/ACCP/HRS Guideline for the Diagnosis and Management of Atrial Fibrillation",
+    "source": "ACC/AHA",
+    "source_url": "https://www.ahajournals.org/doi/10.1161/CIR.0000000000001193",
+    "year": 2023,
+    "text": "In patients with nonvalvular atrial fibrillation and a CHA2DS2-VASc score of 2 or higher in men or 3 or higher in women, oral anticoagulation is recommended to reduce the risk of stroke. Direct oral anticoagulants (apixaban, rivaroxaban, dabigatran, edoxaban) are preferred over warfarin in patients without moderate-to-severe mitral stenosis or a mechanical heart valve. For apixaban, the standard dose is 5 mg twice daily; reduce to 2.5 mg twice daily if the patient meets at least 2 of: age 80 or older, body weight 60 kg or less, or serum creatinine 1.5 mg/dL or higher."
+  }
+]

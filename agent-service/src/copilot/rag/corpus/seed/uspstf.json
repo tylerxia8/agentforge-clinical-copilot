@@ -34,5 +34,50 @@
     "source_url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/depression-and-suicide-risk-in-adults-screening",
     "year": 2023,
     "text": "The U.S. Preventive Services Task Force recommends screening for depression in the adult population, including pregnant and postpartum persons and older adults. (Grade B) Screening should be implemented with adequate systems in place to ensure accurate diagnosis, effective treatment, and appropriate follow-up. The PHQ-2 and PHQ-9 are commonly used validated instruments."
+  },
+  {
+    "chunk_id": "uspstf-obesity-behavioral-2018",
+    "title": "Behavioral Weight Loss Interventions to Prevent Obesity-Related Morbidity and Mortality in Adults",
+    "section": "Recommendation",
+    "source": "USPSTF",
+    "source_url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/obesity-in-adults-interventions",
+    "year": 2018,
+    "text": "The U.S. Preventive Services Task Force recommends that clinicians offer or refer adults with a body mass index (BMI) of 30 or higher to intensive, multicomponent behavioral interventions. (Grade B) Effective interventions provide 12 or more sessions over 12 months and combine behavior change, dietary counseling, and physical activity counseling. The most effective interventions reviewed produced an average weight loss of 2.4 kg at 12 to 18 months."
+  },
+  {
+    "chunk_id": "uspstf-cardiovascular-diet-pa-2020",
+    "title": "Behavioral Counseling Interventions for Healthful Diet and Physical Activity for Cardiovascular Disease Prevention",
+    "section": "Recommendation",
+    "source": "USPSTF",
+    "source_url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/healthy-diet-and-physical-activity-for-cvd-prevention-adults-with-cardiovascular-risk-factors-counseling",
+    "year": 2020,
+    "text": "The U.S. Preventive Services Task Force recommends offering or referring adults with cardiovascular disease risk factors (hypertension, dyslipidemia, abnormal blood glucose, metabolic syndrome) to behavioral counseling interventions to promote a healthful diet and physical activity. (Grade B) Effective interventions are typically delivered over 6 to 18 months by primary care clinicians, dietitians, exercise specialists, or trained lifestyle counselors."
+  },
+  {
+    "chunk_id": "uspstf-colorectal-screen-2021",
+    "title": "Screening for Colorectal Cancer",
+    "section": "Recommendation",
+    "source": "USPSTF",
+    "source_url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/colorectal-cancer-screening",
+    "year": 2021,
+    "text": "The U.S. Preventive Services Task Force recommends screening for colorectal cancer in adults aged 50 to 75 years (Grade A) and in adults aged 45 to 49 years (Grade B). Acceptable screening strategies include annual high-sensitivity FIT or guaiac-based FOBT, multitarget stool DNA-FIT every 1 to 3 years, CT colonography every 5 years, flexible sigmoidoscopy every 5 years (or every 10 years with annual FIT), or colonoscopy every 10 years."
+  },
+  {
+    "chunk_id": "uspstf-tobacco-cessation-2021",
+    "title": "Tobacco Smoking Cessation in Adults",
+    "section": "Recommendation",
+    "source": "USPSTF",
+    "source_url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/tobacco-use-in-adults-and-pregnant-women-counseling-and-interventions",
+    "year": 2021,
+    "text": "The U.S. Preventive Services Task Force recommends that clinicians ask all adults about tobacco use, advise them to stop using tobacco, and provide behavioral interventions and FDA-approved pharmacotherapy for cessation to nonpregnant adults who use tobacco. (Grade A) Combined behavioral plus pharmacologic interventions are more effective than either component alone. First-line pharmacotherapy options include nicotine replacement, varenicline, and bupropion SR."
+  },
+  {
+    "chunk_id": "uspstf-aspirin-cvd-2022",
+    "title": "Aspirin for the Primary Prevention of Cardiovascular Disease",
+    "section": "Recommendation",
+    "source": "USPSTF",
+    "source_url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/aspirin-to-prevent-cardiovascular-disease-preventive-medication",
+    "year": 2022,
+    "text": "The U.S. Preventive Services Task Force recommends against initiating low-dose aspirin for the primary prevention of cardiovascular disease in adults 60 years or older. (Grade D) For adults aged 40 to 59 years with a 10-year cardiovascular disease risk of 10% or greater, the decision to initiate low-dose aspirin should be individualized; the net benefit is small. (Grade C) This recommendation does not apply to patients with a history of cardiovascular disease, who should continue aspirin per their treating clinician."
   }
 ]

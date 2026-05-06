@@ -1,0 +1,20 @@
+[
+  {
+    "chunk_id": "cdc-national-dpp-2024",
+    "title": "National Diabetes Prevention Program (National DPP)",
+    "section": "CDC-Recognized Lifestyle Change Program for Prediabetes",
+    "source": "CDC",
+    "source_url": "https://www.cdc.gov/diabetes-prevention/programs/index.html",
+    "year": 2024,
+    "text": "The CDC-recognized National Diabetes Prevention Program (National DPP) is a structured year-long lifestyle change program for adults with prediabetes (HbA1c 5.7%-6.4%, fasting plasma glucose 100-125 mg/dL, or 2-hour OGTT 140-199 mg/dL) or a history of gestational diabetes. Goals are 5%-7% body weight loss and at least 150 minutes per week of moderate-intensity physical activity. The program comprises 16 weekly core sessions over the first 6 months followed by monthly maintenance sessions. The Medicare Diabetes Prevention Program (MDPP) covers this benefit for eligible Medicare beneficiaries; many private payers also cover the National DPP. Delivery formats include in-person sites (e.g., YMCA), distance learning, and CDC-recognized digital programs (such as Omada, Noom for Health, and Lark)."
+  },
+  {
+    "chunk_id": "cdc-physical-activity-adult-2018",
+    "title": "Physical Activity Guidelines for Adults",
+    "section": "Physical Activity Guidelines for Americans, 2nd Edition",
+    "source": "CDC/HHS",
+    "source_url": "https://health.gov/our-work/nutrition-physical-activity/physical-activity-guidelines",
+    "year": 2018,
+    "text": "Adults should do at least 150 to 300 minutes a week of moderate-intensity, or 75 to 150 minutes a week of vigorous-intensity, aerobic physical activity, or an equivalent combination, preferably spread throughout the week. Adults should also do muscle-strengthening activities of moderate or greater intensity that involve all major muscle groups on 2 or more days a week. Even short bouts of activity count and additional benefits accrue with more activity, up to about 300 minutes a week of moderate-intensity equivalent."
+  }
+]
