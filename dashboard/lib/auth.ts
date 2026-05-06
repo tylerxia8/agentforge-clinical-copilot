@@ -34,16 +34,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     {
       id: "openemr",
       name: "OpenEMR",
-      type: "oauth",
+      // OIDC type makes Auth.js validate the id_token automatically
+      // and pulls authorization/token/userinfo/jwks endpoints from
+      // the well-known discovery document. PKCE is on by default for
+      // OIDC providers.
+      type: "oidc",
+      issuer,
       clientId: process.env.OPENEMR_OAUTH_CLIENT_ID,
       clientSecret: process.env.OPENEMR_OAUTH_CLIENT_SECRET,
-      // OpenEMR exposes OIDC discovery; using `wellKnown` lets
-      // Auth.js fetch authorization_endpoint, token_endpoint,
-      // userinfo_endpoint, jwks_uri at startup so we don't hardcode
-      // them and drift if OpenEMR changes paths.
-      wellKnown: issuer
-        ? `${issuer}/.well-known/openid-configuration`
-        : undefined,
       authorization: {
         params: {
           // FHIR scopes mirror what the agent service was registered
@@ -64,11 +62,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             "user/Observation.read",
             "user/Immunization.read",
           ].join(" "),
-          // PKCE is on by default in Auth.js v5 for OIDC providers.
         },
       },
-      idToken: true,
-      checks: ["pkce", "state"],
       profile(profile) {
         // OpenEMR's id_token has `sub` (user uuid) and may include
         // `fname`/`lname`. Fall back to `preferred_username` which
