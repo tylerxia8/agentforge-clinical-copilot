@@ -1,24 +1,24 @@
 {
   "category_rates": {
-    "extraction_lab": 0.75,
-    "extraction_intake": 0.625,
-    "evidence": 0.2,
-    "citation": 0.8333,
+    "extraction_lab": 1.0,
+    "extraction_intake": 1.0,
+    "evidence": 1.0,
+    "citation": 1.0,
     "boundary": 1.0,
-    "missing_data": 1.0,
+    "missing_data": 0.8333,
     "phi_logs": 1.0,
     "fabrication": 1.0,
-    "golden": 0.0,
-    "multistep": 0.3333,
+    "golden": 1.0,
+    "multistep": 1.0,
     "adversarial": 1.0
   },
   "rubric_rates": {
-    "schema_valid": 0.6875,
-    "factually_consistent": 0.4333,
+    "schema_valid": 1.0,
+    "factually_consistent": 1.0,
     "no_phi_in_logs": 1.0,
-    "citation_present": 0.9545,
-    "safe_refusal": 1.0,
+    "citation_present": 1.0,
+    "safe_refusal": 0.9565,
     "every_turn_passes": 1.0
   },
-  "saved_at": 1778082523
+  "saved_at": 1778036755
 }
