@@ -1150,10 +1150,14 @@ class AuthUtils
             // this should not happen, but will do this to ensure things do not break if it does happen
             $ipString = 'blank';
         }
-        $sql = sqlQuery("SELECT `ip_string` FROM `ip_tracking` WHERE `ip_string` = ?", [$ipString]);
-        if (empty($sql['ip_string'])) {
-            sqlStatement("INSERT INTO `ip_tracking` (`ip_string`) VALUES (?)", [$ipString]);
-        }
+        // Idempotent upsert: SELECT-then-INSERT raced under concurrent OAuth
+        // token mints from a single source IP (e.g. the agent service warming
+        // 7 tools in parallel), tripping ip_tracking.ip_string's UNIQUE key.
+        sqlStatement(
+            "INSERT INTO `ip_tracking` (`ip_string`) VALUES (?) "
+            . "ON DUPLICATE KEY UPDATE `ip_string` = `ip_string`",
+            [$ipString]
+        );
     }
 
     /**
