@@ -170,10 +170,91 @@ async def answer_node(state: WorkerState) -> dict[str, Any]:
         nonce="worker-graph",
     )
     orchestrator = Orchestrator()
-    response = await orchestrator.run_turn(ctx=ctx, message=augmented, history=[])
+    extra = _extra_tool_results(
+        extractions=state.get("extractions") or [],
+        evidence=state.get("evidence") or [],
+    )
+    response = await orchestrator.run_turn(
+        ctx=ctx, message=augmented, history=[], extra_tool_results=extra,
+    )
     # ChatResponse is a Pydantic model; coerce to dict for the
     # workers state's typed final_response slot.
     return {"final_response": response.model_dump()}
+
+
+def _extra_tool_results(
+    *,
+    extractions: list,
+    evidence: list,
+) -> list[dict[str, Any]]:
+    """Build the ToolResult-shaped list the orchestrator will register
+    with the verifier on top of the chart bundle.
+
+    Two sources:
+
+    - **Evidence** chunks fetched by the evidence_retriever node. Each
+      chunk gets a row with ``id = f"Guideline#{chunk.chunk_id}"`` so
+      the answer node's inline ``[Guideline#...]`` citations match.
+    - **Extractions** produced by the intake_extractor node. Each
+      extracted fact carries its own SourceCitation; we synthesize
+      one row per fact whose ``id`` is the citation's
+      ``field_or_chunk_id`` (e.g. ``DocumentReference#<doc_id>``)
+      so a follow-up "what should I do about that A1c" can cite
+      the extracted lab without hitting the verifier's
+      "no such row" rejection.
+    """
+    out: list[dict[str, Any]] = []
+
+    if evidence:
+        guideline_rows: list[dict[str, Any]] = []
+        for ev in evidence:
+            for hit in ev.get("results", []) or []:
+                chunk = getattr(hit, "chunk", None)
+                if chunk is None:
+                    continue
+                guideline_rows.append({
+                    "id": f"Guideline#{chunk.chunk_id}",
+                    "title": chunk.title,
+                    "section": chunk.section,
+                    "source": chunk.source,
+                    "source_url": chunk.source_url,
+                    "year": chunk.year,
+                    "text": chunk.text,
+                })
+        if guideline_rows:
+            out.append({"rows": guideline_rows, "warnings": []})
+
+    if extractions:
+        ext_rows: list[dict[str, Any]] = []
+        for record in extractions:
+            extraction = record.get("extraction")
+            if extraction is None:
+                continue
+            doc_id = record.get("document_reference_id")
+            for owner, citation in _walk_extraction_citations(extraction):
+                if not doc_id:
+                    continue
+                # The owner is the parent fact (LabResult, Demographics,
+                # IntakeMedication, etc.); we emit a row keyed by the
+                # DocumentReference + field path so the verifier accepts
+                # `[DocumentReference#<doc_id>]` citations as real.
+                ext_rows.append({
+                    "id": f"DocumentReference#{doc_id}",
+                    "field": getattr(citation, "field_or_chunk_id", None),
+                    "page": getattr(citation, "page_or_section", None),
+                    "quote": getattr(citation, "quote_or_value", None),
+                    "owner_repr": repr(owner)[:200],
+                })
+        if ext_rows:
+            out.append({"rows": ext_rows, "warnings": []})
+
+    return out
+
+
+def _walk_extraction_citations(extraction: Any):
+    """Reuse the public iter_citations from the extraction package."""
+    from copilot.extraction import iter_citations
+    yield from iter_citations(extraction)
 
 
 def _augment_message(

@@ -47,7 +47,22 @@ class Orchestrator:
         ctx: PatientContext,
         message: str,
         history: list[dict[str, Any]],
+        extra_tool_results: list[dict[str, Any]] | None = None,
     ) -> ChatResponse:
+        """Run one chat turn end-to-end.
+
+        ``extra_tool_results`` lets the W2 worker graph register
+        rows produced *outside* the W1 tool-use loop — guideline
+        chunks the evidence_retriever fetched, facts the
+        intake_extractor pulled from a PDF — so the structural
+        verifier accepts citations to those rows. Without this,
+        the answer node's response would be rejected as inventing
+        citations every time the supervisor routed through a
+        worker. Each entry must have a ``rows`` key matching the
+        ``ToolResult`` shape; each row must have an ``id`` field
+        of the form ``Resource#<id>`` matching the inline citation
+        pattern the verifier checks.
+        """
         # Tag the trace with patient + user identifiers so traces are
         # filterable in Langfuse by chart / user.
         if langfuse_client is not None:
@@ -82,6 +97,17 @@ class Orchestrator:
             tr = redacted_bundle.get(key)
             if isinstance(tr, dict) and "rows" in tr:
                 seen_tool_results.append(tr)
+
+        # 2c. Register worker-produced rows the W2 graph fetched
+        # outside the W1 tool-use loop (guideline chunks from the
+        # evidence_retriever, facts from the intake_extractor). The
+        # rows are tokenized first so the verifier and the LLM see
+        # the same redacted view.
+        if extra_tool_results:
+            for tr in extra_tool_results:
+                if not isinstance(tr, dict) or "rows" not in tr:
+                    continue
+                seen_tool_results.append(tokens.tokenize_dict(tr))
 
         # 3. Build the message sequence the model sees.
         messages: list[dict[str, Any]] = list(history)
