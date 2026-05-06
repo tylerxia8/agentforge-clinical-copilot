@@ -18,6 +18,7 @@ that the uuid in the call matches the open-chart uuid in PatientContext.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -46,9 +47,45 @@ class _TokenCache:
 _tokens = _TokenCache()
 
 
+_TOKEN_RETRY_STATUSES = {502, 503, 504, 500}
+_TOKEN_MAX_RETRIES = 3
+
+
+async def _post_token_with_retry(
+    client: httpx.AsyncClient,
+    data: dict[str, str],
+    grant_label: str,
+) -> dict[str, Any]:
+    """POST the OAuth token endpoint, retrying transient 5xx (typical
+    OpenEMR Apache 502 under sustained load). Permanent errors (400
+    invalid_grant, 401 invalid_client) propagate immediately."""
+    last_resp: httpx.Response | None = None
+    for attempt in range(_TOKEN_MAX_RETRIES + 1):
+        resp = await client.post(
+            f"{settings.openemr_base_url}{settings.openemr_oauth_token_path}",
+            data=data,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        if resp.status_code not in _TOKEN_RETRY_STATUSES or attempt == _TOKEN_MAX_RETRIES:
+            raise RuntimeError(
+                f"OpenEMR {grant_label} token failed [{resp.status_code}]: "
+                f"{resp.text[:300]}"
+            )
+        last_resp = resp
+        logger.warning(
+            "%s token got %d; retrying (attempt %d/%d)",
+            grant_label, resp.status_code, attempt + 1, _TOKEN_MAX_RETRIES,
+        )
+        await asyncio.sleep(min(0.5 * (2 ** attempt), 5.0))
+    # Defensive — loop returns or raises.
+    assert last_resp is not None
+    raise RuntimeError(f"unreachable: {grant_label} retry loop exited")
+
+
 async def _fetch_token_password_grant(client: httpx.AsyncClient) -> dict[str, Any]:
-    resp = await client.post(
-        f"{settings.openemr_base_url}{settings.openemr_oauth_token_path}",
+    return await _post_token_with_retry(
+        client,
         data={
             "grant_type": "password",
             "client_id": settings.openemr_oauth_client_id,
@@ -58,31 +95,21 @@ async def _fetch_token_password_grant(client: httpx.AsyncClient) -> dict[str, An
             "scope": settings.openemr_oauth_scope,
             "user_role": "users",  # OpenEMR-specific: 'users' for staff, 'patient' for portal
         },
+        grant_label="password-grant",
     )
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"OpenEMR password-grant token failed [{resp.status_code}]: "
-            f"{resp.text[:300]}"
-        )
-    return resp.json()
 
 
 async def _fetch_token_refresh(client: httpx.AsyncClient, refresh_token: str) -> dict[str, Any]:
-    resp = await client.post(
-        f"{settings.openemr_base_url}{settings.openemr_oauth_token_path}",
+    return await _post_token_with_retry(
+        client,
         data={
             "grant_type": "refresh_token",
             "client_id": settings.openemr_oauth_client_id,
             "client_secret": settings.openemr_oauth_client_secret,
             "refresh_token": refresh_token,
         },
+        grant_label="refresh-token-grant",
     )
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"OpenEMR refresh-token grant failed [{resp.status_code}]: "
-            f"{resp.text[:300]}"
-        )
-    return resp.json()
 
 
 async def _get_access_token(client: httpx.AsyncClient) -> str:
@@ -114,27 +141,51 @@ class OpenEMRBridge:
     """
 
     async def _fhir_get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        # Retry transient 5xx (gateway / upstream-down) up to 3 times
+        # with exponential backoff. The OpenEMR Apache instance is a
+        # single replica on Railway and 502s briefly under sustained
+        # load (e.g. when the eval suite fires 63 sequential cases,
+        # each warm() fans 7 parallel FHIR calls). Without retry, one
+        # 502 cascades into an empty patient bundle and a refusal
+        # turn — caught in W2 calibration as 5 consistent late-stage
+        # case failures.
+        retry_statuses = {502, 503, 504, 500}
+        max_retries = 3
+        last_resp: httpx.Response | None = None
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=True) as client:
-            token = await _get_access_token(client)
-            resp = await client.get(
-                f"{settings.openemr_base_url}/apis/default/fhir{path}",
-                params=params or {},
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/fhir+json",
-                },
-            )
-            if resp.status_code == 401:
-                # Token went stale mid-request (rare). Force-refresh and retry once.
-                _tokens.expires_at = 0
+            for attempt in range(max_retries + 1):
                 token = await _get_access_token(client)
                 resp = await client.get(
                     f"{settings.openemr_base_url}/apis/default/fhir{path}",
                     params=params or {},
-                    headers={"Authorization": f"Bearer {token}", "Accept": "application/fhir+json"},
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Accept": "application/fhir+json",
+                    },
                 )
-            resp.raise_for_status()
-            return resp.json()
+                if resp.status_code == 401:
+                    # Token went stale mid-request (rare). Force-refresh.
+                    _tokens.expires_at = 0
+                    token = await _get_access_token(client)
+                    resp = await client.get(
+                        f"{settings.openemr_base_url}/apis/default/fhir{path}",
+                        params=params or {},
+                        headers={"Authorization": f"Bearer {token}", "Accept": "application/fhir+json"},
+                    )
+                if resp.status_code not in retry_statuses or attempt == max_retries:
+                    resp.raise_for_status()
+                    return resp.json()
+                last_resp = resp
+                logger.warning(
+                    "fhir_get %s got %d; retrying (attempt %d/%d)",
+                    path, resp.status_code, attempt + 1, max_retries,
+                )
+                # Exponential backoff with jitter, capped at 5s.
+                await asyncio.sleep(min(0.5 * (2 ** attempt), 5.0))
+            # Defensive — loop returns or raises before this.
+            assert last_resp is not None
+            last_resp.raise_for_status()
+            return last_resp.json()
 
     @staticmethod
     def _entries(bundle: dict[str, Any]) -> list[dict[str, Any]]:
