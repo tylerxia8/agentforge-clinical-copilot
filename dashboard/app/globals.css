@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html, body {
+  @apply bg-clinical-bg text-clinical-text antialiased;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Tighter line-height for clinical data — saves vertical space when
+   a chart has many problems / meds. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
