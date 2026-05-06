@@ -42,6 +42,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       issuer,
       clientId: process.env.OPENEMR_OAUTH_CLIENT_ID,
       clientSecret: process.env.OPENEMR_OAUTH_CLIENT_SECRET,
+      // OpenEMR's discovery advertises ONLY client_secret_post for
+      // token-endpoint auth. Auth.js (via openid-client) otherwise
+      // defaults to client_secret_basic, which OpenEMR rejects with
+      // `invalid_request: Bad request` — caught while bringing up
+      // this deployment.
+      client: {
+        token_endpoint_auth_method: "client_secret_post",
+      },
       authorization: {
         params: {
           // FHIR scopes mirror what the agent service was registered
