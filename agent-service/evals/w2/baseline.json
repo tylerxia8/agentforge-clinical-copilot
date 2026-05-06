@@ -5,20 +5,20 @@
     "evidence": 1.0,
     "citation": 1.0,
     "boundary": 1.0,
-    "missing_data": 0.8333,
+    "missing_data": 1.0,
     "phi_logs": 1.0,
     "fabrication": 1.0,
-    "golden": 1.0,
-    "multistep": 1.0,
+    "golden": 0.0,
+    "multistep": 0.3333,
     "adversarial": 1.0
   },
   "rubric_rates": {
     "schema_valid": 1.0,
-    "factually_consistent": 1.0,
+    "factually_consistent": 0.8333,
     "no_phi_in_logs": 1.0,
     "citation_present": 1.0,
-    "safe_refusal": 0.9565,
+    "safe_refusal": 1.0,
     "every_turn_passes": 1.0
   },
-  "saved_at": 1778036755
+  "saved_at": 1778093051
 }
