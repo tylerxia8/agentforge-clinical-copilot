@@ -19,6 +19,11 @@ doesn't match anything on the claimed page are flagged
 written to the chart silently.
 """
 
+from copilot.extraction.hl7v2 import (
+    detect_message_type as detect_hl7_message_type,
+    parse_adt_a08,
+    parse_oru_r01,
+)
 from copilot.extraction.matcher import MatchResult, match_quote
 from copilot.extraction.pdf import Word, extract_words, page_count
 from copilot.extraction.pipeline import attach_bboxes, iter_citations
@@ -35,6 +40,7 @@ __all__ = [
     "Word",
     "attach_bboxes",
     "build_extraction_tool_schema",
+    "detect_hl7_message_type",
     "extract_intake_form",
     "extract_lab_pdf",
     "extract_words",
@@ -42,5 +48,7 @@ __all__ = [
     "iter_citations",
     "match_quote",
     "page_count",
+    "parse_adt_a08",
+    "parse_oru_r01",
     "parse_tool_use_response",
 ]

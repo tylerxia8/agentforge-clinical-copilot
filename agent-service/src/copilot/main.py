@@ -43,8 +43,11 @@ from copilot.context.cache import ContextCache
 from copilot.context.patient import PatientContext, verify_agent_token
 from copilot.extraction import (
     attach_bboxes,
+    detect_hl7_message_type,
     extract_intake_form,
     extract_lab_pdf,
+    parse_adt_a08,
+    parse_oru_r01,
 )
 from copilot.middleware.rate_limit import (
     RateLimitExceeded,
@@ -210,69 +213,136 @@ async def warm(
 
 
 MAX_PDF_BYTES = 25 * 1024 * 1024
-"""Hard upload cap. Anthropic's PDF input supports up to 32 MB / 100
-pages; we leave headroom for multipart overhead and to keep memory
-predictable on the small Railway instance."""
+"""Hard upload cap for binary uploads (PDF, TIFF). Anthropic's PDF
+input supports up to 32 MB / 100 pages; we leave headroom for
+multipart overhead and small-instance memory."""
+
+MAX_TEXT_BYTES = 2 * 1024 * 1024
+"""Hard upload cap for text/structured uploads (HL7v2, DOCX, XLSX).
+Real-world clinical records — even a multi-page referral or a long
+HL7 batch — sit comfortably under 2 MB."""
+
+
+# Doc types accepted by /agent/extract. Lab PDF and intake form go
+# through the vision pipeline; the rest are parsed structurally.
+ExtractDocType = Literal[
+    "lab_pdf",
+    "intake_form",
+    "hl7v2_oru",
+    "hl7v2_adt",
+    "hl7v2",  # auto-detect (ORU vs ADT) from MSH-9
+]
 
 
 @app.post("/agent/extract")
 async def extract(
     request: Request,
     file: UploadFile = File(...),
-    doc_type: Literal["lab_pdf", "intake_form"] = Form(...),
+    doc_type: ExtractDocType = Form(...),
     document_reference_id: str = Form(...),
     ctx: PatientContext = Depends(_ctx_from_token),
 ) -> dict[str, Any]:
-    """Run the vision pipeline against an uploaded document.
+    """Run the appropriate extractor for ``doc_type`` against an
+    uploaded document.
 
-    The PHP module is responsible for storing the PDF on the
-    OpenEMR persistent volume + creating the DocumentReference row
-    BEFORE calling this endpoint; ``document_reference_id`` is the
-    UUID of that row. We forward the bytes directly rather than
-    re-fetching from FHIR (saves a round-trip; the PHP already has
-    them).
+    Vision-based (PDF):
+      - ``lab_pdf``     → :func:`extract_lab_pdf` + bbox attach
+      - ``intake_form`` → :func:`extract_intake_form` + bbox attach
 
-    Returns the validated extraction (Pydantic dump) with bbox
-    citations attached. The PHP module persists the structured
-    output as FHIR Observations / direct-table writes on the
-    OpenEMR side.
+    Structured (HL7 v2):
+      - ``hl7v2_oru``   → :func:`parse_oru_r01` (lab results → LabPdfExtraction)
+      - ``hl7v2_adt``   → :func:`parse_adt_a08` (demographics dict)
+      - ``hl7v2``       → auto-dispatch on MSH-9
+
+    Caller is responsible for storing the source bytes (PDF on the
+    OpenEMR documents volume, HL7 in a designated landing zone) and
+    creating the DocumentReference row BEFORE invoking; the
+    ``document_reference_id`` is what shows up in citations so the
+    chat panel can deep-link back to the source.
     """
-    if file.content_type and file.content_type != "application/pdf":
-        raise HTTPException(
-            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            f"expected application/pdf, got {file.content_type!r}",
-        )
-
-    pdf_bytes = await file.read()
-    if not pdf_bytes:
+    raw_bytes = await file.read()
+    if not raw_bytes:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "empty upload")
-    if len(pdf_bytes) > MAX_PDF_BYTES:
+
+    is_text_doc = doc_type.startswith("hl7v2")
+    cap = MAX_TEXT_BYTES if is_text_doc else MAX_PDF_BYTES
+    if len(raw_bytes) > cap:
         raise HTTPException(
             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            f"upload exceeds {MAX_PDF_BYTES // (1024 * 1024)} MB cap",
+            f"upload exceeds {cap // (1024 * 1024)} MB cap",
         )
+
+    # Content-type sanity. Lenient on HL7 because senders use a zoo of
+    # MIME types ("text/plain", "application/edi-hl7", "application/hl7-v2",
+    # or empty); we just need it not to be an obviously-wrong binary.
+    if not is_text_doc:
+        if file.content_type and file.content_type != "application/pdf":
+            raise HTTPException(
+                status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                f"expected application/pdf for {doc_type!r}, got {file.content_type!r}",
+            )
 
     # No per-IP rate limit on HMAC-authed extract — same rationale
     # as /agent/chat above. Concurrency slot still applies.
     try:
         async with chat_concurrency_slot():
             if doc_type == "lab_pdf":
-                extraction: Any = await extract_lab_pdf(pdf_bytes, document_reference_id)
-            else:  # "intake_form"
-                extraction = await extract_intake_form(pdf_bytes, document_reference_id)
-            summary = attach_bboxes(extraction, pdf_bytes)
+                extraction: Any = await extract_lab_pdf(raw_bytes, document_reference_id)
+                summary = attach_bboxes(extraction, raw_bytes)
+                return {
+                    "extraction": extraction.model_dump(mode="json"),
+                    "bbox_match": summary,
+                    "format": "pdf",
+                }
+            if doc_type == "intake_form":
+                extraction = await extract_intake_form(raw_bytes, document_reference_id)
+                summary = attach_bboxes(extraction, raw_bytes)
+                return {
+                    "extraction": extraction.model_dump(mode="json"),
+                    "bbox_match": summary,
+                    "format": "pdf",
+                }
+
+            # HL7 v2 path. Decode UTF-8 (HL7 is ASCII per spec but we
+            # tolerate UTF-8 for the rare diacritic in a name field).
+            text = raw_bytes.decode("utf-8", errors="replace")
+
+            if doc_type == "hl7v2_oru":
+                lab = parse_oru_r01(text, document_reference_id)
+                return {
+                    "extraction": lab.model_dump(mode="json"),
+                    "format": "hl7v2",
+                    "message_type": "ORU_R01",
+                }
+            if doc_type == "hl7v2_adt":
+                adt = parse_adt_a08(text, document_reference_id)
+                return {
+                    "extraction": adt,
+                    "format": "hl7v2",
+                    "message_type": "ADT_A08",
+                }
+            # auto-detect
+            mt = detect_hl7_message_type(text)
+            if mt == "ORU_R01":
+                lab = parse_oru_r01(text, document_reference_id)
+                return {
+                    "extraction": lab.model_dump(mode="json"),
+                    "format": "hl7v2",
+                    "message_type": mt,
+                }
+            if mt == "ADT_A08":
+                adt = parse_adt_a08(text, document_reference_id)
+                return {
+                    "extraction": adt,
+                    "format": "hl7v2",
+                    "message_type": mt,
+                }
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"unsupported HL7 message type {mt!r} (expected ORU_R01 or ADT_A08)",
+            )
     except RateLimitExceeded as exc:
         raise _rate_limit_response(exc) from exc
-
-    logger.info(
-        "extract %s doc=%s by user=%s patient=%s; bboxes %d/%d",
-        doc_type, document_reference_id, ctx.user_id, ctx.patient_uuid,
-        summary["matched"], summary["walked"],
-    )
-    return {
-        "extraction": extraction.model_dump(mode="json"),
-        "bbox_match": summary,
-    }
 
 
 # ─── Demo UI (gated by DEMO_MODE_ENABLED) ────────────────────────────
