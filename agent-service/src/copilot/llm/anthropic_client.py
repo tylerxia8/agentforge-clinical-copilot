@@ -8,12 +8,62 @@ Why a wrapper:
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import random
 from typing import Any
 
-from anthropic import AsyncAnthropic
+from anthropic import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncAnthropic,
+)
 
 from copilot.observability import langfuse_client, observe
 from copilot.settings import settings
+
+logger = logging.getLogger(__name__)
+
+# Retry-on-overload: Anthropic returns 529 (overloaded_error) under load
+# spikes — the SDK doesn't auto-retry, the LangGraph layer's retry
+# helper doesn't either, so a single 529 propagates and refuses the
+# turn. During W2 calibration we saw ~10 cases miss because of this
+# (golden / multistep / extraction / evidence categories all dropped
+# 30-80pp despite a healthy live agent). Retrying with capped
+# exponential backoff + small jitter makes the calibration robust to
+# brief Anthropic incidents without changing user-visible latency on
+# the happy path.
+_RETRY_STATUSES = (529, 503, 502, 500, 408, 425)
+_MAX_RETRIES = 4
+_BACKOFF_BASE_SECONDS = 1.5
+
+
+async def _call_with_retry(client: AsyncAnthropic, kwargs: dict[str, Any]) -> Any:
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return await client.messages.create(**kwargs)
+        except APIStatusError as exc:
+            status = getattr(exc, "status_code", None)
+            if status not in _RETRY_STATUSES or attempt == _MAX_RETRIES:
+                raise
+            last_exc = exc
+        except (APIConnectionError, APITimeoutError) as exc:
+            if attempt == _MAX_RETRIES:
+                raise
+            last_exc = exc
+        # Exponential backoff with jitter. Cap so a 529 storm doesn't
+        # turn a single chat turn into a 30-second wait.
+        delay = min(_BACKOFF_BASE_SECONDS * (2 ** attempt), 12.0)
+        delay += random.uniform(0, 0.5)
+        logger.warning(
+            "anthropic call retrying after %s (attempt %d/%d, sleep %.1fs)",
+            type(last_exc).__name__, attempt + 1, _MAX_RETRIES, delay,
+        )
+        await asyncio.sleep(delay)
+    # Defensive — the loop returns or raises before reaching here.
+    raise last_exc if last_exc else RuntimeError("retry loop exited without result")
 
 # Per-million-token rates in USD. Source: anthropic.com/pricing as
 # of Sonnet 4.6 launch. The Langfuse cost dashboard reads these via
@@ -96,7 +146,7 @@ class LLM:
         if tools:
             kwargs["tools"] = tools
 
-        response = await self._client.messages.create(**kwargs)
+        response = await _call_with_retry(self._client, kwargs)
 
         # Record model + token usage + cost on the current Langfuse
         # generation. Cache tokens (creation_input / read_input) are
