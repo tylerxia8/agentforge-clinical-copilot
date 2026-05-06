@@ -2,7 +2,7 @@
   "category_rates": {
     "extraction_lab": 1.0,
     "extraction_intake": 1.0,
-    "evidence": 0.9,
+    "evidence": 1.0,
     "citation": 1.0,
     "boundary": 1.0,
     "missing_data": 1.0,
@@ -17,8 +17,8 @@
     "factually_consistent": 0.8333,
     "no_phi_in_logs": 1.0,
     "citation_present": 1.0,
-    "safe_refusal": 0.9565,
+    "safe_refusal": 1.0,
     "every_turn_passes": 1.0
   },
-  "saved_at": 1778045981
+  "saved_at": 1778049119
 }
