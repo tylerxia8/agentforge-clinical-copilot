@@ -1,6 +1,7 @@
 import { Suspense } from "react";
+import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { fhirGet } from "@/lib/fhir";
+import { fhirGet, FhirError } from "@/lib/fhir";
 import type { Patient } from "@/lib/fhir-types";
 import { AppHeader } from "@/components/AppHeader";
 import { PatientHeader } from "@/components/PatientHeader";
@@ -31,7 +32,22 @@ interface Props {
 export default async function PatientDashboard({ params }: Props) {
   const { uuid } = await params;
   const session = await auth();
-  const patient = await fhirGet<Patient>(`/Patient/${uuid}`);
+
+  // OpenEMR's OAuth introspection occasionally rejects a token that
+  // Auth.js still considers valid — happens when OpenEMR was
+  // redeployed (token state lost) or when the access_token expired
+  // and refresh failed silently. Catch the 401 + bounce to /login
+  // with a clear message rather than crashing the page render with
+  // a server-side exception.
+  let patient: Patient;
+  try {
+    patient = await fhirGet<Patient>(`/Patient/${uuid}`);
+  } catch (e) {
+    if (e instanceof FhirError && (e.status === 401 || e.status === 403)) {
+      redirect(`/login?error=session_expired&callbackUrl=/patient/${uuid}`);
+    }
+    throw e;
+  }
 
   return (
     <div className="min-h-screen">

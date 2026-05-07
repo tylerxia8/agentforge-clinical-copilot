@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { fhirGet, unwrap } from "@/lib/fhir";
+import { fhirGet, FhirError, unwrap } from "@/lib/fhir";
 import { AppHeader } from "@/components/AppHeader";
 import type { FhirBundle, Patient } from "@/lib/fhir-types";
 
@@ -17,7 +18,17 @@ import type { FhirBundle, Patient } from "@/lib/fhir-types";
  */
 export default async function PatientsPage() {
   const session = await auth();
-  const bundle = await fhirGet<FhirBundle<Patient>>("/Patient", { _count: "50" });
+  // Same 401-bounce pattern as /patient/[uuid] — bounce to /login
+  // with a session_expired marker rather than crashing the SSR.
+  let bundle: FhirBundle<Patient>;
+  try {
+    bundle = await fhirGet<FhirBundle<Patient>>("/Patient", { _count: "50" });
+  } catch (e) {
+    if (e instanceof FhirError && (e.status === 401 || e.status === 403)) {
+      redirect("/login?error=session_expired&callbackUrl=/patients");
+    }
+    throw e;
+  }
   const patients = unwrap(bundle);
 
   return (
