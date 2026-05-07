@@ -197,20 +197,19 @@ class IntakeFormExtraction(BaseModel):
 
     @model_validator(mode="after")
     def _missing_required_sections_must_warn(self) -> "IntakeFormExtraction":
-        # Demographics is required by the schema; chief_concern is a
-        # softer requirement but the PRD lists it. If chief_concern is
-        # None, we require an explicit warning so the operator UI sees
-        # it rather than silently displaying an intake with no reason
-        # for visit.
+        # Operator-UX safety: missing chief_concern must surface as a
+        # warning so the operator review screen doesn't silently render
+        # an intake with no reason for visit. We auto-append the
+        # warning rather than raising — the LLM legitimately omits
+        # chief_concern for non-intake sources (XLSX workbooks, HL7
+        # ADT, DOCX referrals) where the field doesn't exist.
         if self.chief_concern is None:
             chief_concern_warned = any(
                 "chief concern" in w.lower() or "reason for visit" in w.lower()
                 for w in self.warnings
             )
             if not chief_concern_warned:
-                raise ValueError(
-                    "chief_concern is None but no warning explains why; "
-                    "add a warning like 'chief concern field blank on "
-                    "page 1' so the operator UI can surface it"
+                self.warnings.append(
+                    "chief_concern not present in source document"
                 )
         return self
