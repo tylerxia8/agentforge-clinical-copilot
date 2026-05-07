@@ -26,12 +26,32 @@ The PRD defines these categories (W2 PRD §6):
 
 Boolean, not 1-10. The PRD says: "Use boolean rubrics so failures
 are actionable." A 6/10 means nothing.
+
+**Stage 4 (LLM-as-judge) opt-in.** :func:`judge_yes_no` (re-exported
+from :mod:`evals.w2.judge`) lets a case ask Claude Haiku a binary
+clinical-quality question that the boolean rubrics can't catch
+("does this response correctly identify the diabetic + recommend
+A1c testing?"). Adopt it by adding a rubric like:
+
+    "factual_judgement": lambda r: judge_yes_no(
+        r,
+        question="Does the response identify HTN AND state a "
+                 "guideline-supported BP target?",
+    )
+
+The judge is OFF by default — no case in the suite uses it as of
+the W2 cut. The library is wired so adopting it later is a one-line
+case edit.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any
+
+# Stage 4 — LLM-as-judge tier. Re-exported here so cases only need
+# to import from `rubric` to access every rubric flavor.
+from evals.w2.judge import judge_yes_no  # noqa: F401
 
 from pydantic import ValidationError
 
