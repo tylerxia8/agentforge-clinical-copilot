@@ -6,6 +6,12 @@ interface Props {
 }
 
 export function AppHeader({ user }: Props) {
+  // Dashboard ↔ OpenEMR cross-app navigation: requirement clarification
+  // says "a user can navigate from the new dashboard to existing OpenEMR
+  // pages." OPENEMR_BASE_URL is server-side only (lib/fhir reads it); we
+  // need it client-side too for this link, so it's set as a public env
+  // var (NEXT_PUBLIC_…) on the dashboard service.
+  const openemrUrl = process.env.NEXT_PUBLIC_OPENEMR_BASE_URL ?? process.env.OPENEMR_BASE_URL ?? "";
   return (
     <header className="border-b border-clinical-border bg-clinical-surface">
       <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-6 py-3">
@@ -26,6 +32,17 @@ export function AppHeader({ user }: Props) {
           OpenEMR Patient Dashboard
         </Link>
         <div className="flex items-center gap-3 text-sm">
+          {openemrUrl && (
+            <a
+              href={openemrUrl}
+              target="_blank"
+              rel="noopener"
+              className="rounded border border-clinical-border px-3 py-1 text-xs text-clinical-text hover:bg-slate-50"
+              title="Open the rest of OpenEMR (scheduling, billing, full chart, etc.) in a new tab"
+            >
+              ← OpenEMR
+            </a>
+          )}
           {user?.name && <span className="text-clinical-muted">{user.name}</span>}
           <form
             action={async () => {

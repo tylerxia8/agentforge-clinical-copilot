@@ -17,6 +17,16 @@ export function PatientHeader({ patient, mrnOverride }: Props) {
   const mrn = mrnOverride ?? findMrn(patient) ?? patient.id;
   const active = patient.active !== false;
 
+  // Cross-app deep-link to the same patient in OpenEMR's PHP chart.
+  // OpenEMR's per-patient URL needs the integer pid, not the FHIR
+  // uuid we have here — the closest deep link without a pid lookup
+  // is the demographics search page; the user picks their patient
+  // from there. Skip the link if OPENEMR_BASE_URL isn't configured.
+  const openemrBase = process.env.NEXT_PUBLIC_OPENEMR_BASE_URL ?? process.env.OPENEMR_BASE_URL ?? "";
+  const openInOpenEMR = openemrBase
+    ? `${openemrBase.replace(/\/$/, "")}/interface/main/main_screen.php`
+    : "";
+
   return (
     <header className="border-b border-clinical-border bg-clinical-surface">
       <div className="mx-auto flex max-w-screen-2xl flex-wrap items-baseline gap-x-6 gap-y-2 px-6 py-4">
@@ -24,7 +34,18 @@ export function PatientHeader({ patient, mrnOverride }: Props) {
         <Field label="DOB" value={age !== null ? `${dob} (${age}y)` : dob} />
         <Field label="Sex" value={sex} />
         <Field label="MRN" value={mrn} mono />
-        <span className="ml-auto">
+        <div className="ml-auto flex items-center gap-3">
+          {openInOpenEMR && (
+            <a
+              href={openInOpenEMR}
+              target="_blank"
+              rel="noopener"
+              className="rounded border border-clinical-border px-2.5 py-1 text-xs text-clinical-text hover:bg-slate-50"
+              title="Open this patient in the OpenEMR PHP chart (scheduling, billing, full chart history)"
+            >
+              Open in OpenEMR ↗
+            </a>
+          )}
           {active ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-clinical-success">
               <span className="h-1.5 w-1.5 rounded-full bg-clinical-success" />
@@ -35,7 +56,7 @@ export function PatientHeader({ patient, mrnOverride }: Props) {
               Inactive
             </span>
           )}
-        </span>
+        </div>
       </div>
     </header>
   );

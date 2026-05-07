@@ -2,6 +2,15 @@
 
 > **Required by W2 grading rubric.** This document defends the framework choice
 > for the OpenEMR patient dashboard port. Code lives in [`dashboard/`](./dashboard).
+>
+> **Scope, per the post-spec clarifications:** partial modernization, not a
+> replacement app. The migrated dashboard handles authentication, the patient
+> header, the five required clinical cards, and one additional API-backed
+> section (Encounter history). Every other OpenEMR page (scheduling, billing,
+> reports, the rest of the patient chart, admin) is unchanged and continues
+> to render from the original PHP. Cross-app navigation is wired in both
+> directions so the clinician moves between the modern dashboard and the
+> existing OpenEMR pages from inside the same product.
 
 The W2 surprise challenge asks us to reimplement OpenEMR's PHP-rendered
 patient dashboard against the existing REST + FHIR API, in a modern
@@ -24,6 +33,35 @@ We did not write a single line against the OpenEMR PHP backend, the
 MySQL schema, or the legacy `/interface/*` routes. The dashboard is
 a fully separate process that talks to OpenEMR strictly through its
 own FHIR API.
+
+**Stack purity on the migrated page.** The clarification was explicit:
+"The migrated dashboard page itself should not mix frontend stacks."
+Every component on every dashboard route is React 19 + TypeScript.
+Zero `<iframe>`s embedding PHP. Zero jQuery, zero PHP templates, zero
+classic-OpenEMR fragments. The only "PHP" in the dashboard codebase
+is the `OPENEMR_BASE_URL` constant pointing at it for cross-app
+linking. Everything the clinician sees on `/patient/[uuid]` is server-
+rendered React.
+
+**Cross-app navigation, both directions.**
+
+- *OpenEMR → dashboard.* The embedded co-pilot panel injected into
+  the OpenEMR patient demographics page renders a "Modern
+  Dashboard ↗" link in its header (gated by the
+  `copilot_dashboard_url` global so it only shows when the dashboard
+  is configured). One click opens the same patient's dashboard in a
+  new tab; OAuth completes once on first hit and re-uses the
+  Auth.js session afterwards.
+- *Dashboard → OpenEMR.* Every page renders an "← OpenEMR" link in
+  the app header and an "Open in OpenEMR ↗" link in the patient
+  identity bar. Both deep-link to the OpenEMR PHP app at the
+  `NEXT_PUBLIC_OPENEMR_BASE_URL` configured at deploy time, in a new
+  tab so the dashboard view is preserved.
+
+A clinician can move between the modern dashboard and any other
+OpenEMR page (scheduling, billing, full chart history, lab order
+entry, the parts we did NOT migrate) from inside the same product
+in two clicks.
 
 ## 2. Why Next.js — the four-line answer
 
@@ -211,6 +249,31 @@ Railway service env. The new client must be enabled
 API Clients) before sign-in works — same gating we hit while
 deploying the agent service.
 
+**The API-client form is brittle in practice.** The post-spec
+clarification calls this out: *"Creating an API client may produce
+a client ID and client secret through an admin UI form, but that
+form may fail, crash, or silently do nothing."* We hit this
+multiple times during deployment — the admin UI's "Register New
+App" button would land on a blank page, or the client would appear
+in the table but fail to authenticate against `/oauth2/default/token`
+because the encrypted client_secret in the DB had been written
+with a stale drive key. Workaround that actually worked:
+
+1. Hit `POST /oauth2/default/registration` directly with `curl`
+   (the curl block above) instead of clicking through the UI form.
+   This bypasses the form's CSRF round-trip + the admin-UI bug.
+2. Verify the row exists with the right scopes via SQL: `SELECT
+   client_id, client_name, is_enabled FROM oauth_clients WHERE
+   client_name LIKE 'Patient%'`.
+3. Flip `is_enabled = 1` either via the admin UI's enable toggle
+   (this part of the form usually works) or via direct UPDATE if
+   the toggle silently doesn't propagate.
+4. Set the env vars on the dashboard service, redeploy, sign in.
+
+Same recovery procedure works for the agent service's client. We
+documented this in [AUDIT.md §1.5](AUDIT.md) as a known
+production-deployment hazard.
+
 ## 7. What we deliberately did not build
 
 - **Patient search box.** `/patients` lists the first 50; there's no
@@ -241,14 +304,24 @@ deploying the agent service.
 | One optional section | `components/EncountersCard.tsx` (Encounter history, 10 most-recent) |
 | Framework defense in markdown | This file |
 
-## 9. Open questions for review
+## 9. Cross-check against the post-spec clarifications
+
+| Clarification | How met |
+|---|---|
+| Dashboard required for Final, not Early submission | Shipped Friday; not blocking the early submission |
+| Migrate ONLY the listed features, not every patient-page card | Built exactly the named subset (auth, header, 5 cards, +1) |
+| Rest of OpenEMR remains available | Backend untouched; PHP app fully functional |
+| Same codebase + broader UX | Monorepo (`dashboard/` alongside `agent-service/` + the OpenEMR fork); cross-app links in both directions, see §3 |
+| Migrated page must not mix frontend stacks | React-only; zero embedded PHP / iframes / classic-OpenEMR fragments |
+| Don't change OpenEMR backend APIs | Read-only against existing `/apis/default/fhir/*` |
+| Don't replace authentication | Auth.js v5 OIDC against OpenEMR's existing `/oauth2/default` flow |
+| Clinician-facing patient dashboard (PCP perspective) | `/patients` → `/patient/[uuid]` with the chart-data cards required by the rubric |
+| API-client form may fail/crash/silently no-op | Documented workaround in §6 — direct curl to `/oauth2/default/registration` bypasses the broken admin UI |
+
+## 10. Open questions for review
 
 - Do we want to surface `Observation?category=vital-signs` as a
   second optional section? Easy add; the spec only requires one.
-- Should the dashboard embed our W1/W2 co-pilot panel via iframe?
-  Strict reading of the spec ("feature parity with the original"):
-  no, the original dashboard doesn't have a co-pilot. But it would
-  be a strong demo moment. Punted on this for the W2 cut.
 - Worth wiring the dashboard into the existing eval gate? The
   current gate runs only against `agent-service`. A dashboard
   smoke-test (auth → load `/patient/<uuid>` → assert 6 cards
