@@ -91,6 +91,32 @@
     line-height: 1;
 }
 
+/* Retry button — appears on error / refusal messages where the
+   panel knows what to re-send. Compact + secondary so it doesn't
+   compete with the message text. */
+.copilot-msg-retry {
+    display: inline-block;
+    margin-top: 8px;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    color: #334155;
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.copilot-msg-retry:hover:not(:disabled) {
+    background: #f1f5f9;
+    border-color: #94a3b8;
+}
+
+.copilot-msg-retry:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .copilot-messages {
     flex: 1;
     overflow-y: auto;

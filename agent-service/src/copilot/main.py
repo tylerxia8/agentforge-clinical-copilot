@@ -404,6 +404,54 @@ async def demo_index() -> FileResponse | HTMLResponse:
     return FileResponse(index, media_type="text/html")
 
 
+# ─── Visibility / introspection (built per W2 MVP grader feedback) ────
+
+
+@app.get("/visibility", response_class=HTMLResponse, response_model=None)
+async def visibility_index() -> FileResponse | HTMLResponse:
+    """Static page that visualizes the corpus + supervisor routing
+    rules + eval coverage + recent supervisor decisions + a live
+    retrieval inspector. Authentication-free on purpose: the data
+    surfaced is the system's *shape* (not patient data), and the
+    point of the page is reviewer / operator transparency."""
+    page = _STATIC_DIR / "visibility.html"
+    if not page.exists():
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "visibility page missing")
+    return FileResponse(page, media_type="text/html")
+
+
+@app.get("/visibility/data")
+async def visibility_data() -> dict[str, Any]:
+    """JSON aggregate consumed by /visibility's static page. Also
+    useful for piping into a CLI or external dashboard."""
+    from copilot.visibility import (
+        corpus_snapshot,
+        eval_coverage_snapshot,
+        recent_traces,
+        routing_snapshot,
+    )
+    return {
+        "corpus": corpus_snapshot(),
+        "routing": routing_snapshot(),
+        "eval_coverage": eval_coverage_snapshot(),
+        "recent_traces": recent_traces(),
+    }
+
+
+class RetrievalInspectRequest(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+@app.post("/visibility/retrieve")
+async def visibility_retrieve(body: RetrievalInspectRequest) -> dict[str, Any]:
+    """Run a query through the production retriever and return the
+    BM25 / dense / rerank breakdown with scores. Lets the visibility
+    page show what the agent sees BEFORE the LLM gets it."""
+    from copilot.visibility import retrieval_breakdown
+    return retrieval_breakdown(_RETRIEVER, body.query, body.top_k)
+
+
 @app.post("/demo/chat", response_model=ChatResponse)
 async def demo_chat(body: DemoChatRequest, request: Request) -> ChatResponse:
     """Demo endpoint that mints a PatientContext server-side instead of

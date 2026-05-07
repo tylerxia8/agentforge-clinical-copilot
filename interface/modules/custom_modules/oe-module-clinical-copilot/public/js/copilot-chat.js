@@ -283,18 +283,17 @@
         return btn;
     }
 
-    form.addEventListener("submit", async (ev) => {
-        ev.preventDefault();
-        if (pending) return;
-
-        const text = input.value.trim();
-        if (!text) return;
-
+    /**
+     * Send a chat turn. Wrapped in a function (instead of inlined in
+     * the submit handler) so the post-MVP error UI can offer a Retry
+     * button that re-runs the same turn without re-typing the
+     * message.
+     */
+    async function sendTurn(text) {
         // Hide suggestions once the conversation starts.
         if (suggestionsEl && !suggestionsEl.hidden) suggestionsEl.hidden = true;
 
         appendMessage("user", text);
-        input.value = "";
         pending = true;
 
         const thinkingEl = appendMessage("assistant", "Thinking…", { ephemeral: true });
@@ -317,10 +316,11 @@
             thinkingEl.remove();
 
             if (!response.ok) {
+                const friendly = friendlyHttpError(response.status);
                 appendMessage(
                     "assistant",
-                    `Server returned ${response.status}. Try again in a moment.`,
-                    { error: true },
+                    friendly,
+                    { error: true, retryText: text },
                 );
                 return;
             }
@@ -328,10 +328,14 @@
             const body = await response.json();
 
             if (body.refused) {
+                // Refusal IS a successful response — agent declined for
+                // a defensible reason (no tool data, missing chart, etc).
+                // Surface the reason inline so the doctor can decide
+                // whether to rephrase, retry, or give up.
                 appendMessage(
                     "assistant",
                     body.text || body.refusal_reason || "Co-pilot declined the request.",
-                    { refusal: true },
+                    { refusal: true, retryText: text },
                 );
                 return;
             }
@@ -347,20 +351,48 @@
             thinkingEl.remove();
             appendMessage(
                 "assistant",
-                "Network error talking to the co-pilot service.",
-                { error: true },
+                "Network error reaching the co-pilot service. Check your connection and try again.",
+                { error: true, retryText: text },
             );
             console.error("[copilot]", err);
         } finally {
             pending = false;
             input.focus();
         }
+    }
+
+    function friendlyHttpError(status) {
+        if (status === 401 || status === 403) {
+            return "Your session expired. Refresh the page and sign back in.";
+        }
+        if (status === 404) {
+            return "Couldn't reach the co-pilot service (404). Admin should check that the agent service is running.";
+        }
+        if (status === 429) {
+            return "Too many requests in a short window. Wait a few seconds and retry.";
+        }
+        if (status === 502 || status === 503 || status === 504) {
+            return "Co-pilot service is temporarily unreachable (HTTP " + status + "). It often recovers within a minute — retry below.";
+        }
+        if (status >= 500) {
+            return "Co-pilot service hit an internal error (HTTP " + status + "). Retry; if it persists, the trace is in Langfuse.";
+        }
+        return "Server returned " + status + ". Try again in a moment.";
+    }
+
+    form.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        if (pending) return;
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = "";
+        await sendTurn(text);
     });
 
     /**
      * @param {"user"|"assistant"} role
      * @param {string} text
-     * @param {{ ephemeral?: boolean, error?: boolean, refusal?: boolean, sources?: string[] }} [opts]
+     * @param {{ ephemeral?: boolean, error?: boolean, refusal?: boolean, sources?: string[], retryText?: string }} [opts]
      */
     function appendMessage(role, text, opts = {}) {
         const el = document.createElement("div");
@@ -392,6 +424,21 @@
         }
 
         el.appendChild(body);
+        // Render a Retry button for error / refusal messages that
+        // know what message to re-send. Lets the doctor recover from
+        // a transient 502 without re-typing the question.
+        if (opts.retryText && (opts.error || opts.refusal)) {
+            const retryBtn = document.createElement("button");
+            retryBtn.type = "button";
+            retryBtn.className = "copilot-msg-retry";
+            retryBtn.textContent = "↻ Retry";
+            retryBtn.addEventListener("click", () => {
+                if (pending) return;
+                retryBtn.disabled = true;
+                sendTurn(opts.retryText);
+            });
+            el.appendChild(retryBtn);
+        }
         messagesEl.appendChild(el);
         messagesEl.scrollTop = messagesEl.scrollHeight;
         return el;

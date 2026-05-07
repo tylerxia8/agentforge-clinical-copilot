@@ -53,6 +53,21 @@ def supervisor_node(state: WorkerState) -> dict[str, Any]:
         "supervisor decision: %s (hop %d/%d)",
         decision, new_hops, HOP_LIMIT,
     )
+    # Capture this decision in the visibility ring buffer so the
+    # /visibility page can show the most recent supervisor routings.
+    # Pulled out behind a try so a future visibility refactor can't
+    # break the supervisor — this is observability, not logic.
+    try:
+        from copilot.visibility import record_supervisor_decision
+        record_supervisor_decision(
+            message=str(state.get("message", "")),
+            decision=decision,
+            hops=new_hops,
+            has_attachment=state.get("attachment") is not None,
+            has_evidence=bool(state.get("evidence")),
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return {"hops": new_hops, "next": decision}
 
 

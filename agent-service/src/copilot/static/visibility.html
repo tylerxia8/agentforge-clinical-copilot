@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AgentForge — System Visibility</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --warning: #d97706;
+      --success: #15803d;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      font-size: 14px; line-height: 1.5;
+    }
+    header.app {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+    }
+    header.app h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    header.app .sub {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    main { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    nav.tabs {
+      display: flex; gap: 4px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 24px;
+    }
+    nav.tabs button {
+      background: transparent; border: none;
+      padding: 10px 16px;
+      font-size: 13px; font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    nav.tabs button[aria-selected="true"] {
+      color: var(--text);
+      border-bottom-color: var(--accent);
+    }
+    section.tab { display: none; }
+    section.tab[aria-current="true"] { display: block; }
+    h2 { margin: 0 0 12px 0; font-size: 14px; font-weight: 600; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
+      text-align: left; padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th { font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px; border-radius: 999px;
+      font-size: 11px; font-weight: 500;
+    }
+    .pill.green  { background: #dcfce7; color: var(--success); }
+    .pill.amber  { background: #fef3c7; color: var(--warning); }
+    .pill.muted  { background: #f1f5f9; color: var(--muted); }
+    .pill.blue   { background: #dbeafe; color: var(--accent); }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      font-size: 12px;
+    }
+    pre.snippet {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 12px; line-height: 1.5;
+      white-space: pre-wrap;
+      max-height: 6em; overflow: hidden;
+    }
+    .row-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    }
+    @media (max-width: 800px) { .row-grid { grid-template-columns: 1fr; } }
+    .retrieve-form { display: flex; gap: 8px; margin-bottom: 12px; }
+    .retrieve-form input {
+      flex: 1; padding: 8px 10px;
+      border: 1px solid var(--border); border-radius: 4px;
+      font-size: 13px;
+    }
+    .retrieve-form button {
+      background: var(--accent); color: white;
+      border: none; padding: 8px 16px; border-radius: 4px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+    }
+    .retrieve-form button:disabled { background: #94a3b8; }
+    .layer-bm25  { color: #7c3aed; font-weight: 500; }
+    .layer-dense { color: #0891b2; font-weight: 500; }
+    .layer-rerank { color: #db2777; font-weight: 500; }
+    .ascii-graph {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px; line-height: 1.4;
+      white-space: pre;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px;
+      overflow-x: auto;
+    }
+    .empty { color: var(--muted); font-style: italic; padding: 12px 0; }
+  </style>
+</head>
+<body>
+<header class="app">
+  <h1>AgentForge Clinical Co-Pilot — System Visibility</h1>
+  <div class="sub">
+    Live introspection into the deployed agent: corpus, supervisor routing, eval coverage, recent decisions, and a hybrid-retrieval inspector.
+  </div>
+</header>
+<main>
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="orchestration">Worker orchestration</button>
+    <button role="tab" data-tab="retrieval">Retrieval architecture</button>
+    <button role="tab" data-tab="evals">Eval coverage</button>
+    <button role="tab" data-tab="corpus">Corpus inspector</button>
+  </nav>
+
+  <!-- ─── ORCHESTRATION TAB ─────────────────────────────────────── -->
+  <section class="tab" data-tab="orchestration" aria-current="true">
+    <div class="card">
+      <h2>Supervisor → worker graph</h2>
+      <div class="ascii-graph">
+                 ┌──────────────┐
+   user message →│  supervisor  │← hops counter (cap: 5)
+                 └──┬────┬───┬──┘
+                    │    │   │
+        attachment? │    │   │ guideline-trigger token?
+              ▼    │    │   │      (and no evidence yet)
+   ┌──────────────┐│    │   │
+   │ intake_      ││    │   ▼
+   │ extractor    ││    │  ┌────────────────────┐
+   │ (vision)     ││    │  │ evidence_retriever │
+   └──────┬───────┘│    │  │ (BM25+dense+rerank)│
+          │        │    │  └─────────┬──────────┘
+          │        │    │            │
+          └──→ supervisor (re-route) ←┘
+                       │
+                       ▼ default
+                 ┌──────────────┐
+                 │  answer node │ ← W1 orchestrator (verifier + retry)
+                 └──────────────┘
+      </div>
+    </div>
+    <div class="card">
+      <h2>Routing rules (deterministic, in evaluation order)</h2>
+      <table id="routing-table"><thead><tr>
+        <th>Rule</th><th>Test</th><th>Decision</th><th>Rationale</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Recent supervisor decisions</h2>
+      <p class="sub" style="margin: 0 0 8px 0; color: var(--muted); font-size: 12px;">
+        In-memory ring buffer (last 20). Cleared on agent restart.
+      </p>
+      <table id="traces-table"><thead><tr>
+        <th>When</th><th>Decision</th><th>Hops</th><th>Has attach</th><th>Has evidence</th><th>Message preview</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- ─── RETRIEVAL TAB ─────────────────────────────────────────── -->
+  <section class="tab" data-tab="retrieval">
+    <div class="card">
+      <h2>Live retrieval inspector</h2>
+      <p style="margin: 0 0 12px 0; color: var(--muted); font-size: 12px;">
+        Type any clinical question and see what the hybrid retriever returns BEFORE the LLM sees it. Same retriever the agent uses on every chat turn.
+      </p>
+      <form class="retrieve-form" id="retrieve-form">
+        <input type="text" id="retrieve-input" placeholder='e.g. "When should I prescribe a statin?"' value="My patient is overweight. What programs should I recommend?" />
+        <button type="submit" id="retrieve-btn">Retrieve</button>
+      </form>
+      <div id="retrieve-results"></div>
+    </div>
+    <div class="card">
+      <h2>Architecture</h2>
+      <ul style="margin: 0; padding-left: 20px;">
+        <li><strong class="layer-bm25">BM25</strong> over the corpus text — keyword recall layer, dependency-free, in-memory.</li>
+        <li><strong class="layer-dense">Voyage voyage-3</strong> for dense embeddings — semantic recall layer. Optional; degrades gracefully to BM25-only if VOYAGE_API_KEY is unset.</li>
+        <li><strong class="layer-rerank">Cohere Rerank 3</strong> over the BM25 ∪ dense union — final precision layer. Optional; if missing, the retriever fuses upstream scores via reciprocal rank.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ─── EVALS TAB ─────────────────────────────────────────────── -->
+  <section class="tab" data-tab="evals">
+    <div class="card" id="eval-summary"></div>
+    <div class="card">
+      <h2>Per-category coverage</h2>
+      <table id="eval-table"><thead><tr>
+        <th>Category</th><th>Cases</th><th>Target</th><th>Baseline</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Per-rubric baseline rate</h2>
+      <table id="rubric-table"><thead><tr>
+        <th>Rubric</th><th>Pass rate</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- ─── CORPUS TAB ────────────────────────────────────────────── -->
+  <section class="tab" data-tab="corpus">
+    <div class="card">
+      <h2>Clinical guideline corpus</h2>
+      <p style="margin: 0 0 12px 0; color: var(--muted); font-size: 12px;">
+        Hand-curated. <span id="corpus-count"></span> chunks across USPSTF, ADA, ACIP, ACC/AHA, CDC.
+      </p>
+      <table id="corpus-table"><thead><tr>
+        <th>Source</th><th>Year</th><th>Title</th><th>Chunk ID</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Selected chunk</h2>
+      <div id="corpus-detail" class="empty">Click a row above to inspect the full text.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+const tabs = document.querySelectorAll('nav.tabs button[role="tab"]');
+const sections = document.querySelectorAll('section.tab');
+tabs.forEach(t => t.addEventListener('click', () => {
+  tabs.forEach(x => x.setAttribute('aria-selected', String(x === t)));
+  sections.forEach(s => s.setAttribute('aria-current', String(s.dataset.tab === t.dataset.tab)));
+}));
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[c]);
+}
+
+async function loadVisibility() {
+  const resp = await fetch('/visibility/data');
+  const data = await resp.json();
+
+  // ─── routing rules ──────────
+  const rt = document.querySelector('#routing-table tbody');
+  rt.innerHTML = data.routing.decision_order.map(r => `
+    <tr>
+      <td><span class="pill blue">${escapeHtml(r.rule)}</span></td>
+      <td class="mono">${escapeHtml(r.test)}</td>
+      <td><span class="pill green">${escapeHtml(r.decision)}</span></td>
+      <td>${escapeHtml(r.rationale)}</td>
+    </tr>
+  `).join('');
+
+  // ─── recent traces ──────────
+  const tt = document.querySelector('#traces-table tbody');
+  if (!data.recent_traces.length) {
+    tt.innerHTML = `<tr><td colspan="6" class="empty">No supervisor decisions recorded since last agent restart.</td></tr>`;
+  } else {
+    tt.innerHTML = data.recent_traces.map(t => `
+      <tr>
+        <td class="mono">${t.ago_seconds}s ago</td>
+        <td><span class="pill blue">${escapeHtml(t.decision)}</span></td>
+        <td>${t.hops}</td>
+        <td>${t.has_attachment ? 'yes' : '—'}</td>
+        <td>${t.has_evidence ? 'yes' : '—'}</td>
+        <td class="mono">${escapeHtml(t.message_preview)}</td>
+      </tr>
+    `).join('');
+  }
+
+  // ─── corpus ──────────
+  document.getElementById('corpus-count').textContent = data.corpus.length;
+  const ct = document.querySelector('#corpus-table tbody');
+  ct.innerHTML = data.corpus.map((c, i) => `
+    <tr data-i="${i}" style="cursor: pointer;">
+      <td><span class="pill muted">${escapeHtml(c.source)}</span></td>
+      <td>${c.year}</td>
+      <td>${escapeHtml(c.title)}</td>
+      <td class="mono">${escapeHtml(c.chunk_id)}</td>
+    </tr>
+  `).join('');
+  ct.querySelectorAll('tr[data-i]').forEach(row => row.addEventListener('click', () => {
+    const c = data.corpus[+row.dataset.i];
+    document.getElementById('corpus-detail').innerHTML = `
+      <h3 style="margin: 0 0 6px 0; font-size: 14px;">${escapeHtml(c.title)}</h3>
+      <div style="color: var(--muted); font-size: 12px; margin-bottom: 10px;">
+        <span class="pill muted">${escapeHtml(c.source)}</span>
+        ${c.year} · <span class="mono">${escapeHtml(c.chunk_id)}</span> ·
+        <a href="${escapeHtml(c.source_url)}" target="_blank" rel="noopener">source ↗</a>
+      </div>
+      <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">Section: ${escapeHtml(c.section)}</div>
+      <pre class="snippet" style="max-height: none;">${escapeHtml(c.text_full)}</pre>
+    `;
+  }));
+
+  // ─── eval coverage ──────────
+  const ec = data.eval_coverage;
+  if (!ec.available) {
+    document.getElementById('eval-summary').innerHTML = `<div class="empty">Eval coverage data not available in this deploy: ${escapeHtml(ec.reason || '')}</div>`;
+  } else {
+    document.getElementById('eval-summary').innerHTML = `
+      <h2>Suite at a glance</h2>
+      <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+        <div><div style="font-size: 11px; color: var(--muted); text-transform: uppercase;">Total cases</div><div style="font-size: 20px; font-weight: 600;">${ec.total_cases}</div></div>
+        <div><div style="font-size: 11px; color: var(--muted); text-transform: uppercase;">Categories</div><div style="font-size: 20px; font-weight: 600;">${ec.categories.length}</div></div>
+        <div><div style="font-size: 11px; color: var(--muted); text-transform: uppercase;">Rubrics</div><div style="font-size: 20px; font-weight: 600;">${Object.keys(ec.rubric_rates).length}</div></div>
+      </div>
+    `;
+    const et = document.querySelector('#eval-table tbody');
+    et.innerHTML = ec.categories.map(c => {
+      const rate = c.baseline_rate;
+      const ratePill = rate === null || rate === undefined
+        ? '<span class="pill muted">—</span>'
+        : rate >= 1.0 ? `<span class="pill green">${(rate * 100).toFixed(0)}%</span>`
+        : rate >= 0.9 ? `<span class="pill amber">${(rate * 100).toFixed(0)}%</span>`
+        : `<span class="pill" style="background:#fee2e2;color:#dc2626;">${(rate * 100).toFixed(0)}%</span>`;
+      return `<tr>
+        <td><strong>${escapeHtml(c.category)}</strong></td>
+        <td>${c.case_count}</td>
+        <td>${c.target_count}</td>
+        <td>${ratePill}</td>
+      </tr>`;
+    }).join('');
+    const rt2 = document.querySelector('#rubric-table tbody');
+    rt2.innerHTML = Object.entries(ec.rubric_rates).map(([name, rate]) => {
+      const pill = rate >= 1.0 ? `<span class="pill green">${(rate * 100).toFixed(0)}%</span>`
+        : rate >= 0.9 ? `<span class="pill amber">${(rate * 100).toFixed(0)}%</span>`
+        : `<span class="pill" style="background:#fee2e2;color:#dc2626;">${(rate * 100).toFixed(0)}%</span>`;
+      return `<tr><td><strong>${escapeHtml(name)}</strong></td><td>${pill}</td></tr>`;
+    }).join('');
+  }
+}
+
+document.getElementById('retrieve-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const q = document.getElementById('retrieve-input').value.trim();
+  if (!q) return;
+  const btn = document.getElementById('retrieve-btn');
+  btn.disabled = true; btn.textContent = 'Retrieving…';
+  const results = document.getElementById('retrieve-results');
+  results.innerHTML = '';
+  try {
+    const resp = await fetch('/visibility/retrieve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({query: q, top_k: 5}),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      results.innerHTML = `<div class="empty">Error: ${escapeHtml(data.error)}</div>`;
+    } else if (!data.results || !data.results.length) {
+      results.innerHTML = '<div class="empty">No chunks matched.</div>';
+    } else {
+      results.innerHTML = `
+        <table><thead><tr>
+          <th>#</th><th>Layer</th><th>Score</th><th>Source / year</th><th>Title</th><th>Chunk ID</th>
+        </tr></thead><tbody>
+        ${data.results.map(r => `
+          <tr>
+            <td>${r.rank}</td>
+            <td><span class="layer-${escapeHtml(r.source_layer)}">${escapeHtml(r.source_layer)}</span></td>
+            <td class="mono">${r.score}</td>
+            <td><span class="pill muted">${escapeHtml(r.source)}</span> ${r.year}</td>
+            <td>${escapeHtml(r.title)}</td>
+            <td class="mono">${escapeHtml(r.chunk_id)}</td>
+          </tr>
+          <tr><td colspan="6"><pre class="snippet">${escapeHtml(r.text_preview)}</pre></td></tr>
+        `).join('')}
+        </tbody></table>
+      `;
+    }
+  } catch (e) {
+    results.innerHTML = `<div class="empty">Request failed: ${escapeHtml(String(e))}</div>`;
+  }
+  btn.disabled = false; btn.textContent = 'Retrieve';
+});
+
+loadVisibility().catch(e => {
+  document.querySelector('main').innerHTML = `<div class="card empty">Failed to load /visibility/data — ${escapeHtml(String(e))}</div>`;
+});
+</script>
+</body>
+</html>
