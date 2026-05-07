@@ -43,18 +43,26 @@ _REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}
 def xlsx_to_text(xlsx_bytes: bytes) -> str:
     """Extract every sheet of an XLSX as CSV-shaped text. Each sheet
     is preceded by a ``# <sheet name>`` heading. Returns one string
-    suitable for feeding to a text-only LLM call."""
+    suitable for feeding to a text-only LLM call.
+
+    Tag matching is local-name based (``_local(tag) == "row"``) so the
+    parser doesn't break if a workbook declares a different default
+    namespace or a sheet uses a `mc:AlternateContent` wrapper. Tested
+    against the cohort 5 W2 asset pack (LibreOffice-style XLSX with
+    inlineStr cells and no shared strings)."""
     import xml.etree.ElementTree as ET
 
     with zipfile.ZipFile(io.BytesIO(xlsx_bytes)) as z:
         names = set(z.namelist())
 
-        # 1. sharedStrings.xml (optional)
+        # 1. sharedStrings.xml (optional). Some writers (LibreOffice
+        # with strict-mode export off) embed strings inline instead.
         shared: list[str] = []
         if "xl/sharedStrings.xml" in names:
             tree = ET.fromstring(z.read("xl/sharedStrings.xml"))
-            for si in tree.findall(f"{_SS_NS}si"):
-                shared.append(_collect_text(si))
+            for si in tree.iter():
+                if _local(si.tag) == "si":
+                    shared.append(_collect_text(si))
 
         # 2. workbook.xml — sheet names + relationship ids
         wb = ET.fromstring(z.read("xl/workbook.xml"))
@@ -65,15 +73,22 @@ def xlsx_to_text(xlsx_bytes: bytes) -> str:
         rel_target: dict[str, str] = {}
         if rels is not None:
             for rel in rels.iter():
-                if rel.tag.endswith("}Relationship") or rel.tag == "Relationship":
-                    rel_target[rel.attrib["Id"]] = rel.attrib["Target"]
+                if _local(rel.tag) == "Relationship":
+                    rel_target[rel.attrib.get("Id", "")] = rel.attrib.get("Target", "")
 
         sheets: list[tuple[str, str]] = []
-        for sheet in wb.findall(f"{_SS_NS}sheets/{_SS_NS}sheet"):
+        for sheet in wb.iter():
+            if _local(sheet.tag) != "sheet":
+                continue
             name = sheet.attrib.get("name", "Sheet")
-            rid = sheet.attrib.get(f"{_REL_NS}id", "")
+            # r:id attribute — try every namespace key since different
+            # writers prefix the relationships namespace differently.
+            rid = ""
+            for k, v in sheet.attrib.items():
+                if k.endswith("}id") or k == "id":
+                    rid = v
+                    break
             target = rel_target.get(rid, "")
-            # Resolve relative ref like "worksheets/sheet1.xml" → "xl/worksheets/sheet1.xml"
             if target and not target.startswith("xl/"):
                 target = "xl/" + target.lstrip("/")
             sheets.append((name, target))
@@ -85,19 +100,30 @@ def xlsx_to_text(xlsx_bytes: bytes) -> str:
                 continue
             chunks.append(f"# {name}")
             sheet_xml = ET.fromstring(z.read(sheet_path))
-            for row in sheet_xml.findall(f".//{_SS_NS}row"):
+            for row in sheet_xml.iter():
+                if _local(row.tag) != "row":
+                    continue
                 cells: list[str] = []
-                for c in row.findall(f"{_SS_NS}c"):
+                for c in row.iter():
+                    if _local(c.tag) != "c":
+                        continue
                     cells.append(_cell_value(c, shared))
-                chunks.append(",".join(cells))
+                if cells:
+                    chunks.append(",".join(cells))
             chunks.append("")  # blank line between sheets
 
     return re.sub(r"\n{3,}", "\n\n", "\n".join(chunks)).strip()
 
 
+def _local(tag: str) -> str:
+    """Strip the ``{namespace}`` prefix off an ElementTree tag."""
+    return tag.split("}", 1)[1] if "}" in tag else tag
+
+
 def _collect_text(el) -> str:
-    """Concatenate every ``<t>`` descendant into one string."""
-    return "".join(t.text or "" for t in el.iter(f"{_SS_NS}t"))
+    """Concatenate every ``<t>`` descendant (any namespace) into one
+    string."""
+    return "".join(t.text or "" for t in el.iter() if _local(t.tag) == "t")
 
 
 def _cell_value(c, shared: list[str]) -> str:
@@ -105,15 +131,23 @@ def _cell_value(c, shared: list[str]) -> str:
     if cell_type == "inlineStr":
         return _csv_escape(_collect_text(c))
     if cell_type == "s":
-        v = c.find(f"{_SS_NS}v")
+        v = _find_local(c, "v")
         try:
             idx = int(v.text or "0") if v is not None else 0
         except ValueError:
             return ""
         return _csv_escape(shared[idx]) if 0 <= idx < len(shared) else ""
     # numeric / bool / date — fall back to raw <v>
-    v = c.find(f"{_SS_NS}v")
+    v = _find_local(c, "v")
     return _csv_escape(v.text or "") if v is not None else ""
+
+
+def _find_local(parent, local_name: str):
+    """Find the first descendant with this local-name (any namespace)."""
+    for el in parent.iter():
+        if _local(el.tag) == local_name:
+            return el
+    return None
 
 
 def _csv_escape(value: str) -> str:
