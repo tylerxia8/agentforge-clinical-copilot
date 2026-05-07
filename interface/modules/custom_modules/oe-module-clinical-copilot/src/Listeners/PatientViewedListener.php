@@ -66,6 +66,15 @@ final class PatientViewedListener
         $pdfEndpoint = $this->installPath . '/public/pdf.php';
         $patientName = $this->lookupPatientName($pid);
 
+        // Modern Next.js dashboard deep-link. Empty if the global isn't
+        // set — button hides rather than dead-ends. The dashboard handles
+        // OAuth on first hit; subsequent hits reuse the Auth.js session.
+        $dashboardBase = trim((string) ($GLOBALS['copilot_dashboard_url'] ?? ''));
+        $patientUuid = $this->pidToUuid($pid);
+        $dashboardUrl = ($dashboardBase !== '' && $patientUuid !== null)
+            ? rtrim($dashboardBase, '/') . '/patient/' . $patientUuid
+            : '';
+
         // Cache-busting versions for our static assets. Browsers
         // aggressively cache JS/CSS at the Apache layer; without a
         // version query string a deployed change can sit invisible
@@ -111,7 +120,18 @@ final class PatientViewedListener
                         <span class="copilot-patient">for <?= htmlspecialchars($patientName, ENT_QUOTES) ?></span>
                     <?php } ?>
                 </span>
-                <button type="button" class="copilot-close" aria-label="Minimize">−</button>
+                <div class="copilot-header-actions">
+                    <?php if ($dashboardUrl !== '') { ?>
+                        <a class="copilot-dashboard-link"
+                           href="<?= htmlspecialchars($dashboardUrl, ENT_QUOTES) ?>"
+                           target="_blank"
+                           rel="noopener"
+                           title="Open this patient in the Next.js dashboard (opens in new tab)">
+                            Modern Dashboard ↗
+                        </a>
+                    <?php } ?>
+                    <button type="button" class="copilot-close" aria-label="Minimize">−</button>
+                </div>
             </header>
             <div class="copilot-messages" id="copilot-messages" role="log" aria-live="polite">
                 <div id="copilot-suggestions" class="copilot-suggestions">

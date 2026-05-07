@@ -47,6 +47,16 @@ return [
                 . 'env var on the Python agent service. Generate with '
                 . '`python -c "import secrets;print(secrets.token_hex(32))"`.',
         ],
+        [
+            'name' => 'copilot_dashboard_url',
+            'type' => 'text',
+            'default' => '',
+            'description' => 'Public URL of the Next.js patient dashboard '
+                . '(W2 surprise port). When set, every chart\'s embedded '
+                . 'co-pilot panel renders a "Modern Dashboard ↗" link in '
+                . 'its header that opens the chart in the modern view '
+                . '(in a new tab). Leave blank to hide the link.',
+        ],
     ],
 
     'install' => [
