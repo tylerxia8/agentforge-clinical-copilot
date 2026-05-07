@@ -11,16 +11,35 @@ for the Gauntlet AI Austin admission sprint.
 | [USERS.md](USERS.md) | Target user (PCP, 20-patient day) and the use cases the agent addresses |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Week 1 AI integration plan — verification, observability, failure modes, scaling |
 | [W2_ARCHITECTURE.md](W2_ARCHITECTURE.md) | **Week 2** multimodal evidence agent — schemas, vision pipeline, hybrid RAG, supervisor + worker graph, eval gate |
+| [PATIENT_DASHBOARD_MIGRATION.md](PATIENT_DASHBOARD_MIGRATION.md) | **Week 2 surprise port** — defense of Next.js 15 + Auth.js v5 framework choice for the FHIR-backed patient dashboard |
 | [COSTS.md](COSTS.md) | W1 cost & scale projections (100 → 100K users) |
-| [W2_COSTS.md](W2_COSTS.md) | **Week 2** cost & latency report — vision/RAG deltas, p50/p95, bottleneck analysis |
+| [W2_COSTS.md](W2_COSTS.md) | **Week 2** cost & latency report — vision / RAG / multi-format / cookbook tier / dashboard, p50/p95, bottleneck analysis |
 | [DEMO_SCRIPT.md](DEMO_SCRIPT.md) / [W2_DEMO_SCRIPT.md](W2_DEMO_SCRIPT.md) | W1 / W2 demo video scripts |
+| [INTERVIEW_PREP.md](INTERVIEW_PREP.md) | AI-interview talking points keyed to repo artifacts |
 
-**Deployed app:** https://openemr-production-0996.up.railway.app/
+**Deployed apps:**
 
-**Stack:** OpenEMR (PHP 8.2 + Apache + MariaDB) → custom
-`oe-module-clinical-copilot/` module → Python agent service
-(FastAPI + Anthropic Claude) → Redis context cache + Langfuse traces.
-Both web tiers deploy to Railway.
+- **Embedded co-pilot** (PHP module rendered into the patient chart):
+  https://openemr-production-0996.up.railway.app/
+- **Modern dashboard** (Next.js port of the patient chart):
+  https://openemr-dashboard-production.up.railway.app/
+- **Standalone agent UI** (token-less demo / fallback):
+  https://copilot-agent-production-ba87.up.railway.app/
+
+**Stack:**
+
+- OpenEMR (PHP 8.2 + Apache + MariaDB) →
+  `interface/modules/custom_modules/oe-module-clinical-copilot/`
+  embedded chat panel
+- `agent-service/` — Python (FastAPI + Anthropic Claude) → Redis
+  context cache → Langfuse traces. Hybrid RAG (BM25 + Voyage +
+  Cohere Rerank) over a 24-chunk USPSTF / ADA / ACIP / ACC-AHA / CDC
+  guideline corpus
+- Multi-format ingestion: PDF (vision), HL7 v2 ORU + ADT (structured
+  parse), DOCX referral letters, XLSX workbooks, TIFF fax packets
+- `dashboard/` — Next.js 15 (App Router, React 19 server components)
+  + Auth.js v5 OIDC against OpenEMR's `/oauth2/default` endpoint
+- Four+1 Railway services: OpenEMR + agent + Redis + MySQL + dashboard
 
 **Quick start (local):**
 
