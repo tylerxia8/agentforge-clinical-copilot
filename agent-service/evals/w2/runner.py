@@ -19,6 +19,13 @@ CLI:
     python -m evals.w2.runner --json results.json   # also write JSON
     python -m evals.w2.runner --compare baseline.json     # exit nonzero on regression
     python -m evals.w2.runner --save-baseline baseline.json   # snapshot current pass rates
+
+    # Record + replay (stage 3 of the prod-evals cookbook). Capture
+    # every case's response on a known-good run, then iterate on
+    # rubrics without re-hitting the agent (and without burning
+    # Anthropic tokens):
+    python -m evals.w2.runner --record evals/w2/recordings/2026-05-06.jsonl
+    python -m evals.w2.runner --replay evals/w2/recordings/2026-05-06.jsonl
 """
 
 from __future__ import annotations
@@ -51,6 +58,12 @@ class CaseResult:
     description: str
     rubric_results: dict[str, dict[str, Any]]  # rubric_name -> {passed, reason}
     elapsed_seconds: float
+    # Raw response from the case's fire() — kept on the result object
+    # so the recorder doesn't re-fire (one extra Anthropic call per
+    # case adds up at scale). Excluded from the JSON report via
+    # asdict's default behavior on private prefix? — no, asdict
+    # serializes everything. We pop this manually before JSON dump.
+    response: Any | None = None
 
 
 def run_case(case: W2Case) -> CaseResult:
@@ -60,7 +73,14 @@ def run_case(case: W2Case) -> CaseResult:
     except Exception as exc:  # noqa: BLE001 — never crash the runner
         response = {"_status": -1, "_error": f"{type(exc).__name__}: {exc}"}
     elapsed = time.time() - started
+    return _grade_case(case, response, elapsed)
 
+
+def _grade_case(
+    case: W2Case, response: Any, elapsed: float,
+) -> CaseResult:
+    """Apply a case's rubrics to a response (live or replayed). Pulled
+    out of run_case so the replay path uses the SAME grading code."""
     rubric_results: dict[str, dict[str, Any]] = {}
     for name, checker in case.rubrics.items():
         try:
@@ -68,14 +88,35 @@ def run_case(case: W2Case) -> CaseResult:
         except Exception as exc:  # noqa: BLE001
             passed, reason = False, f"checker raised: {type(exc).__name__}: {exc}"
         rubric_results[name] = {"passed": bool(passed), "reason": reason}
-
     return CaseResult(
         case_id=case.case_id,
         category=case.category,
         description=case.description,
         rubric_results=rubric_results,
         elapsed_seconds=round(elapsed, 2),
+        response=response,
     )
+
+
+def _replay_one(case: W2Case, recordings: dict) -> CaseResult:
+    """Apply rubrics to the recorded response. If the case has no
+    recording, mark every rubric as failed with a clear reason
+    (rather than skipping silently — the operator should see that
+    a case wasn't covered by the recording set)."""
+    rec = recordings.get(case.case_id)
+    if rec is None:
+        rubric_results: dict[str, dict[str, Any]] = {
+            name: {"passed": False, "reason": "no recording for this case_id"}
+            for name in case.rubrics
+        }
+        return CaseResult(
+            case_id=case.case_id,
+            category=case.category,
+            description=case.description,
+            rubric_results=rubric_results,
+            elapsed_seconds=0.0,
+        )
+    return _grade_case(case, rec.response, rec.elapsed_seconds)
 
 
 def summarize(results: list[CaseResult]) -> dict[str, Any]:
@@ -126,8 +167,19 @@ def summarize(results: list[CaseResult]) -> dict[str, Any]:
             "category_totals": dict(category_totals),
             "category_targets": target_status,
         },
-        "results": [asdict(r) for r in results],
+        # Strip the heavyweight `response` field from the JSON report —
+        # it's kept on the in-memory CaseResult for the recorder, but
+        # serializing 60+ full agent responses bloats the report 50x
+        # for no eval-gate value (the rubric outcomes are what the gate
+        # compares against).
+        "results": [_result_to_report_dict(r) for r in results],
     }
+
+
+def _result_to_report_dict(r: CaseResult) -> dict[str, Any]:
+    d = asdict(r)
+    d.pop("response", None)
+    return d
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -236,11 +288,59 @@ def main() -> int:
         "--regression-delta", type=float, default=DEFAULT_REGRESSION_DELTA,
         help="Allowed drop vs baseline (default 0.05 = 5 percentage points).",
     )
+    parser.add_argument(
+        "--record",
+        type=Path,
+        help="Record every case's response to this JSONL path while running. "
+             "Use the resulting file with --replay to re-grade without "
+             "re-hitting the deployed agent.",
+    )
+    parser.add_argument(
+        "--replay",
+        type=Path,
+        help="Read recorded responses from this JSONL path instead of "
+             "calling the deployed agent. Each case's rubrics still run; "
+             "the agent is never contacted. Cases without a recording "
+             "are reported as 'no recording' failures.",
+    )
     args = parser.parse_args()
 
+    if args.record and args.replay:
+        print("# --record and --replay are mutually exclusive", file=sys.stderr)
+        return 2
+
     cases = cases_module.all_cases()
-    print(f"# running {len(cases)} W2 case(s)…", file=sys.stderr)
-    results = [run_case(c) for c in cases]
+    if args.replay:
+        from evals.w2.replay import load_recorded_responses
+        recordings = load_recorded_responses(args.replay)
+        print(
+            f"# replaying {len(cases)} W2 case(s) against {len(recordings)} "
+            f"recording(s) from {args.replay}",
+            file=sys.stderr,
+        )
+        results = [_replay_one(c, recordings) for c in cases]
+    elif args.record:
+        from evals.w2.replay import RecordedResponse, write_recordings
+        print(
+            f"# running {len(cases)} W2 case(s) and recording to {args.record}…",
+            file=sys.stderr,
+        )
+        results = [run_case(c) for c in cases]
+        recs = [
+            RecordedResponse(
+                case_id=r.case_id,
+                category=r.category,
+                description=r.description,
+                response=r.response if isinstance(r.response, dict) else {"_value": r.response},
+                elapsed_seconds=r.elapsed_seconds,
+            )
+            for r in results
+        ]
+        write_recordings(recs, args.record)
+        print(f"# wrote {len(recs)} recording(s) to {args.record}", file=sys.stderr)
+    else:
+        print(f"# running {len(cases)} W2 case(s)…", file=sys.stderr)
+        results = [run_case(c) for c in cases]
     report = summarize(results)
 
     print(render_markdown(report))
