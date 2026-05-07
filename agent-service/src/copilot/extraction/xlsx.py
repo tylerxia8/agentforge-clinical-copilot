@@ -89,9 +89,7 @@ def xlsx_to_text(xlsx_bytes: bytes) -> str:
                     rid = v
                     break
             target = rel_target.get(rid, "")
-            if target and not target.startswith("xl/"):
-                target = "xl/" + target.lstrip("/")
-            sheets.append((name, target))
+            sheets.append((name, _resolve_relationship_target(target)))
 
         # 3. Each sheet → CSV-ish lines
         chunks: list[str] = []
@@ -118,6 +116,22 @@ def xlsx_to_text(xlsx_bytes: bytes) -> str:
 def _local(tag: str) -> str:
     """Strip the ``{namespace}`` prefix off an ElementTree tag."""
     return tag.split("}", 1)[1] if "}" in tag else tag
+
+
+def _resolve_relationship_target(target: str) -> str:
+    """Normalize a workbook.xml.rels Target into a zip-relative path.
+
+    Writers vary: LibreOffice and Excel emit ``/xl/worksheets/sheet1.xml``
+    (absolute, leading slash); some writers emit ``worksheets/sheet1.xml``
+    (relative to the workbook's directory). Either form must end up
+    as ``xl/worksheets/sheet1.xml`` for our zip.namelist() lookup."""
+    if not target:
+        return ""
+    # Strip leading slash, then ensure xl/ prefix.
+    target = target.lstrip("/")
+    if not target.startswith("xl/"):
+        target = "xl/" + target
+    return target
 
 
 def _collect_text(el) -> str:
