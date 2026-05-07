@@ -11,7 +11,14 @@ export function AppHeader({ user }: Props) {
   // pages." OPENEMR_BASE_URL is server-side only (lib/fhir reads it); we
   // need it client-side too for this link, so it's set as a public env
   // var (NEXT_PUBLIC_…) on the dashboard service.
-  const openemrUrl = process.env.NEXT_PUBLIC_OPENEMR_BASE_URL ?? process.env.OPENEMR_BASE_URL ?? "";
+  // Append ?site=default — OpenEMR errors out with 'Site ID is
+  // missing from session data!' if you navigate directly to
+  // main_screen.php without it. Going via login.php drops the user
+  // on the right page after auth, with the site session cookie set.
+  const openemrBase = process.env.NEXT_PUBLIC_OPENEMR_BASE_URL ?? process.env.OPENEMR_BASE_URL ?? "";
+  const openemrUrl = openemrBase
+    ? `${openemrBase.replace(/\/$/, "")}/interface/login/login.php?site=default`
+    : "";
   return (
     <header className="border-b border-clinical-border bg-clinical-surface">
       <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-6 py-3">

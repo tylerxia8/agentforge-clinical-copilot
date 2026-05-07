@@ -20,11 +20,13 @@ export function PatientHeader({ patient, mrnOverride }: Props) {
   // Cross-app deep-link to the same patient in OpenEMR's PHP chart.
   // OpenEMR's per-patient URL needs the integer pid, not the FHIR
   // uuid we have here — the closest deep link without a pid lookup
-  // is the demographics search page; the user picks their patient
-  // from there. Skip the link if OPENEMR_BASE_URL isn't configured.
+  // is the login page (which then drops the user on the main screen
+  // for the requested site). The `site` query param is required;
+  // without it main_screen.php errors out with 'Site ID is missing
+  // from session data!'
   const openemrBase = process.env.NEXT_PUBLIC_OPENEMR_BASE_URL ?? process.env.OPENEMR_BASE_URL ?? "";
   const openInOpenEMR = openemrBase
-    ? `${openemrBase.replace(/\/$/, "")}/interface/main/main_screen.php`
+    ? `${openemrBase.replace(/\/$/, "")}/interface/login/login.php?site=default`
     : "";
 
   return (
