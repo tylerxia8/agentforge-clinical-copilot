@@ -115,7 +115,31 @@ Hit Enter. Wait ~10s.
 
 ---
 
-## 1:55–2:25 — What the agent WON'T do (30 sec)
+## 1:55–2:25 — Visibility page (NEW, 30 sec)
+
+**Show.** Switch to a tab pre-loaded at
+`https://copilot-agent-production-ba87.up.railway.app/visibility`.
+Click through the four tabs in order: **Worker orchestration**,
+**Retrieval architecture**, **Eval coverage**, **Corpus inspector**.
+
+**Say.**
+> "MVP-grader feedback was 'add visibility into retrieval, eval, and
+> orchestration' — this is the answer. One page, four tabs. Worker
+> graph as ASCII; deterministic routing rules visible in the table
+> with the trigger-token list. Hit retrieve on the Retrieval tab —
+> it runs a live BM25 / dense / rerank query against the same retriever
+> the agent uses, surfaces scores per layer per chunk before any LLM
+> sees it. Eval coverage tab shows the 63 cases by category against
+> the locked baseline, color-coded by health. Corpus inspector lists
+> all 24 chunks; click any row for the full guideline text and a
+> link to the source."
+
+Hit Retrieve on the inspector with the "overweight programs"
+question to show live scoring.
+
+---
+
+## 2:25–2:55 — What the agent WON'T do (30 sec)
 
 Three boundary refusals, fired quickly in the chat panel:
 
@@ -329,6 +353,10 @@ two segments are the headline visual changes from the mid-week cut.
   https://openemr-dashboard-production.up.railway.app/
 - Standalone agent UI (fallback):
   https://copilot-agent-production-ba87.up.railway.app/
+- **Visibility page** (corpus, routing rules, eval coverage,
+  recent supervisor decisions, live retrieval inspector — built per
+  W2 MVP grader feedback):
+  https://copilot-agent-production-ba87.up.railway.app/visibility
 - W2 architecture: [W2_ARCHITECTURE.md](W2_ARCHITECTURE.md)
 - Patient-dashboard framework defense:
   [PATIENT_DASHBOARD_MIGRATION.md](PATIENT_DASHBOARD_MIGRATION.md)
