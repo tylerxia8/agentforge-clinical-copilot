@@ -19,6 +19,7 @@ doesn't match anything on the claimed page are flagged
 written to the chart silently.
 """
 
+from copilot.extraction.docx import docx_to_text, extract_docx_referral
 from copilot.extraction.hl7v2 import (
     detect_message_type as detect_hl7_message_type,
     parse_adt_a08,
@@ -27,6 +28,7 @@ from copilot.extraction.hl7v2 import (
 from copilot.extraction.matcher import MatchResult, match_quote
 from copilot.extraction.pdf import Word, extract_words, page_count
 from copilot.extraction.pipeline import attach_bboxes, iter_citations
+from copilot.extraction.tiff import extract_tiff_fax, tiff_to_pdf
 from copilot.extraction.vision import (
     build_extraction_tool_schema,
     extract_intake_form,
@@ -34,6 +36,7 @@ from copilot.extraction.vision import (
     hydrate_with_document_id,
     parse_tool_use_response,
 )
+from copilot.extraction.xlsx import extract_xlsx_workbook, xlsx_to_text
 
 __all__ = [
     "MatchResult",
@@ -41,9 +44,13 @@ __all__ = [
     "attach_bboxes",
     "build_extraction_tool_schema",
     "detect_hl7_message_type",
+    "docx_to_text",
+    "extract_docx_referral",
     "extract_intake_form",
     "extract_lab_pdf",
+    "extract_tiff_fax",
     "extract_words",
+    "extract_xlsx_workbook",
     "hydrate_with_document_id",
     "iter_citations",
     "match_quote",
@@ -51,4 +58,6 @@ __all__ = [
     "parse_adt_a08",
     "parse_oru_r01",
     "parse_tool_use_response",
+    "tiff_to_pdf",
+    "xlsx_to_text",
 ]

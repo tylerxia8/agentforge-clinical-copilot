@@ -317,6 +317,54 @@ async def _call_vision_tool(
     return parse_tool_use_response(response, tool_name)
 
 
+async def _call_text_tool(
+    *,
+    prose: str,
+    system_prompt: str,
+    tool_name: str,
+    tool_description: str,
+    schema_cls: Type[BaseModel],
+) -> dict[str, Any]:
+    """Sibling of :func:`_call_vision_tool` for plain-text inputs
+    (DOCX → text, XLSX → CSV-flavoured text). Same forced tool-use
+    pattern; just swaps the document content block for a text block."""
+    import anthropic
+
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    tool_schema = build_extraction_tool_schema(schema_cls)
+    response = await client.messages.create(
+        model=settings.model_id,
+        max_tokens=settings.max_tokens,
+        system=system_prompt,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Extract this document using the {tool_name} tool. "
+                            "Cite the literal text you read for every fact.\n\n"
+                            "--- BEGIN DOCUMENT ---\n"
+                            f"{prose}\n"
+                            "--- END DOCUMENT ---"
+                        ),
+                    },
+                ],
+            }
+        ],
+        tools=[
+            {
+                "name": tool_name,
+                "description": tool_description,
+                "input_schema": tool_schema,
+            }
+        ],
+        tool_choice={"type": "tool", "name": tool_name},
+    )
+    return parse_tool_use_response(response, tool_name)
+
+
 # ─── private helpers ────────────────────────────────────────────────────
 
 

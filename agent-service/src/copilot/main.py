@@ -44,8 +44,11 @@ from copilot.context.patient import PatientContext, verify_agent_token
 from copilot.extraction import (
     attach_bboxes,
     detect_hl7_message_type,
+    extract_docx_referral,
     extract_intake_form,
     extract_lab_pdf,
+    extract_tiff_fax,
+    extract_xlsx_workbook,
     parse_adt_a08,
     parse_oru_r01,
 )
@@ -231,6 +234,9 @@ ExtractDocType = Literal[
     "hl7v2_oru",
     "hl7v2_adt",
     "hl7v2",  # auto-detect (ORU vs ADT) from MSH-9
+    "docx_referral",
+    "xlsx_workbook",
+    "tiff_fax",  # multi-page TIFF, converted to PDF in-process
 ]
 
 
@@ -264,6 +270,8 @@ async def extract(
     if not raw_bytes:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "empty upload")
 
+    # Per-format upload caps. Text-flavoured uploads stay small;
+    # binary scans/PDFs get the larger Anthropic-friendly cap.
     is_text_doc = doc_type.startswith("hl7v2")
     cap = MAX_TEXT_BYTES if is_text_doc else MAX_PDF_BYTES
     if len(raw_bytes) > cap:
@@ -272,14 +280,25 @@ async def extract(
             f"upload exceeds {cap // (1024 * 1024)} MB cap",
         )
 
-    # Content-type sanity. Lenient on HL7 because senders use a zoo of
-    # MIME types ("text/plain", "application/edi-hl7", "application/hl7-v2",
-    # or empty); we just need it not to be an obviously-wrong binary.
-    if not is_text_doc:
-        if file.content_type and file.content_type != "application/pdf":
+    # Content-type sanity. Strict for the formats that must be a
+    # specific binary (PDF, TIFF); lenient for text-shaped formats
+    # because senders emit a zoo of MIME types in practice.
+    expected_ct: dict[str, tuple[str, ...]] = {
+        "lab_pdf":       ("application/pdf",),
+        "intake_form":   ("application/pdf",),
+        "tiff_fax":      ("image/tiff", "image/tif"),
+        "docx_referral": (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        "xlsx_workbook": (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+    }
+    if doc_type in expected_ct and file.content_type:
+        if file.content_type not in expected_ct[doc_type]:
             raise HTTPException(
                 status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                f"expected application/pdf for {doc_type!r}, got {file.content_type!r}",
+                f"expected {expected_ct[doc_type]} for {doc_type!r}, got {file.content_type!r}",
             )
 
     # No per-IP rate limit on HMAC-authed extract — same rationale
@@ -301,6 +320,29 @@ async def extract(
                     "extraction": extraction.model_dump(mode="json"),
                     "bbox_match": summary,
                     "format": "pdf",
+                }
+            if doc_type == "docx_referral":
+                docx = await extract_docx_referral(raw_bytes, document_reference_id)
+                return {
+                    "extraction": docx.model_dump(mode="json"),
+                    "format": "docx",
+                }
+            if doc_type == "xlsx_workbook":
+                wb = await extract_xlsx_workbook(raw_bytes, document_reference_id)
+                return {
+                    "extraction": wb.model_dump(mode="json"),
+                    "format": "xlsx",
+                }
+            if doc_type == "tiff_fax":
+                # TIFF → in-process PDF → existing lab-PDF vision pipeline.
+                # We DON'T attach_bboxes here: the converted PDF has no
+                # underlying text layer (it's a rasterized scan), so
+                # pdfplumber won't find words to match. Citations carry
+                # the quote_or_value the model emitted; bbox stays null.
+                tiff_extraction = await extract_tiff_fax(raw_bytes, document_reference_id)
+                return {
+                    "extraction": tiff_extraction.model_dump(mode="json"),
+                    "format": "tiff",
                 }
 
             # HL7 v2 path. Decode UTF-8 (HL7 is ASCII per spec but we

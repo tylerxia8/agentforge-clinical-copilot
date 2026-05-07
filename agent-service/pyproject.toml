@@ -31,6 +31,10 @@ dependencies = [
     # multipart upload. FastAPI defers this dep so it must be
     # explicit on the project.
     "python-multipart>=0.0.9",
+    # W2 cohort test pack — multi-page TIFF fax packets convert to
+    # PDF in-process so they can ride the existing lab-PDF vision
+    # pipeline. Pillow handles bi-level (1bpp) fax TIFFs natively.
+    "pillow>=10.4",
 ]
 
 [project.optional-dependencies]

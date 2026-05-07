@@ -197,7 +197,11 @@ def parse_oru_r01(raw: str, document_reference_id: str) -> LabPdfExtraction:
     issuing_lab = None
     if msh:
         # MSH-4 is sending facility (e.g. "BERKELEY HLTH SYS LAB").
-        issuing_lab = msh.field(4) or None
+        # MSH numbering quirk: MSH-1 is the field separator character
+        # itself, so HL7 MSH-N maps to fields[N-1] in our pipe-split
+        # — unlike every other segment where the segment name takes
+        # fields[0] and segment-N maps to fields[N].
+        issuing_lab = msh.field(3) or None
 
     accession_number = None
     if obr:
@@ -363,7 +367,9 @@ def detect_message_type(raw: str) -> str | None:
         return None
     # MSH-9 is "MessageType^TriggerEvent^MessageStructure"; we key on
     # the structure (MSH-9.3) when present, falling back to type+event.
-    mt_field = msh.field(9)
+    # MSH numbering quirk (see parse_oru_r01): MSH-1 is the field
+    # separator itself, so HL7 MSH-9 maps to our fields[8].
+    mt_field = msh.field(8)
     parts = mt_field.split("^") if mt_field else []
     if len(parts) >= 3 and parts[2]:
         return parts[2]
