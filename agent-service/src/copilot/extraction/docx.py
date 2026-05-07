@@ -91,7 +91,9 @@ patient's current state at the time of writing. If the letter
 contradicts itself (e.g. lists a med in one paragraph and says
 "discontinued" later), surface BOTH lines as separate medications,
 mark the discontinued one's notes accordingly, and add a warning.
-4. If the letter is unreadable or appears to be in a non-English
+4. ``intake_date``, when emitted, MUST be a bare ISO date string —
+e.g. ``2026-05-06``, NOT ``"2026-05-06"`` (no embedded quotes).
+5. If the letter is unreadable or appears to be in a non-English
 language we can't reliably extract from, return an empty extraction
 with a warning explaining why. Do not guess.
 """

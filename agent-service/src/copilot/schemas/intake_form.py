@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from copilot.schemas.citations import SourceCitation
 
@@ -155,7 +155,13 @@ class IntakeFormExtraction(BaseModel):
         description="Date the patient filled out the form, as written. "
                     "Often missing.",
     )
-    demographics: Demographics
+    demographics: Demographics | None = Field(
+        None,
+        description="Patient demographics block. Optional because "
+                    "non-form sources (e.g. an XLSX workbook with no "
+                    "Patient sheet) may not surface a clean demographics "
+                    "object — extractor should add a warning instead.",
+    )
     chief_concern: ChiefConcern | None = Field(
         None,
         description="Optional because some intake forms separate 'reason "
@@ -172,6 +178,22 @@ class IntakeFormExtraction(BaseModel):
                     "section was unreadable, intentionally blank, or if "
                     "the extractor couldn't tell.",
     )
+
+    @field_validator("intake_date", mode="before")
+    @classmethod
+    def _strip_quoted_date(cls, v: object) -> object:
+        """Some upstream LLM tool-call paths (DOCX referral, XLSX
+        workbook) emit dates as a string with embedded quote
+        characters (e.g. ``'"2026-05-06"'``) — looks like a
+        double-encoding bug somewhere between the model's tool
+        emission and our deserialization. Strip surrounding
+        whitespace + matched quotes so Pydantic's date parser
+        sees the bare ISO form."""
+        if isinstance(v, str):
+            stripped = v.strip()
+            if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in ('"', "'"):
+                return stripped[1:-1]
+        return v
 
     @model_validator(mode="after")
     def _missing_required_sections_must_warn(self) -> "IntakeFormExtraction":

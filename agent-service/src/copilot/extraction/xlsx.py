@@ -136,15 +136,30 @@ serialized as CSV. Common sheet names include ``Patient``,
 ``Conditions``. Extract all clinically actionable facts using the
 emit_intake_extraction tool.
 
+Sheet → schema mapping (apply when the sheet exists, even if
+column names differ slightly from the canonical names below):
+
+- ``Patient`` (or ``Demographics``) → ``demographics`` block.
+  These sheets are usually two-column key/value: rows like
+  ``Name, Margaret Chen``, ``DOB, 1968-03-12``, ``Sex, F``,
+  ``MRN, BHS-2847163``. Map them onto demographics fields. Even a
+  single recognizable identifier (name OR DOB OR MRN) is enough to
+  emit the demographics object.
+- ``Medications`` → ``medications[]`` (one entry per row, skipping
+  the header row).
+- ``Allergies`` → ``allergies[]``.
+- ``Family History`` (or ``FamilyHistory``) → ``family_history[]``.
+- Anything else (vitals, conditions, lab results) → surface as a
+  warning string; the schema doesn't yet have those slots.
+
 Rules:
 
 1. For every extracted fact, set ``quote_or_value`` to the LITERAL
 cell content (or row, joined with commas) you read it from.
 2. Set ``field_or_chunk_id`` to ``<sheet>!<row>`` or
 ``<sheet>!<col><row>`` (e.g. ``Patient!B2``, ``Medications!3``).
-3. If a sheet contains data we don't have a destination field for
-(e.g. lab results in a Workbook), surface it as a warning rather
-than dropping silently.
+3. ``intake_date``, when emitted, MUST be a bare ISO date string —
+e.g. ``2026-05-06``, NOT ``"2026-05-06"`` (no embedded quotes).
 4. If the workbook is empty or unreadable, return an empty
 extraction with a warning. Do not guess.
 """
