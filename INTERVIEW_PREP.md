@@ -479,3 +479,201 @@ Three specific bets:
   built one) ready to demo as the "graders inject a regression"
   proof.
 - This document on a second screen.
+
+---
+
+# Thursday AI interview — drilled answers
+
+> Four likely questions; the answers below are the ones I'd actually
+> give live. Each leads with the one-sentence version + a concrete
+> example or arc; depth on follow-up.
+
+## "Explain your hybrid retrieval design. Why both sparse and dense over just one, and how did rerank actually change the final ranking?"
+
+**Why both sparse and dense:** they fail on opposite query shapes.
+BM25 (sparse) nails keyword precision — `"USPSTF statin"`
+reliably surfaces the chunk that literally contains those tokens.
+It dies on paraphrase. Dense (Voyage `voyage-3`) catches semantic
+similarity — *"when should I start someone on a cholesterol drug
+for prevention?"* matches the statin chunk even though `"prescribe"`
+and `"start"` aren't in the chunk text. Run both, take the union,
+get a recall-friendly candidate pool of ~15.
+
+**What the reranker actually does:** Cohere Rerank 3 is a
+cross-encoder. It looks at the query and each candidate *together*
+(slow), instead of comparing pre-computed embeddings (fast but
+lossy). For our 24-chunk corpus, the rerank cost is trivial and
+the precision lift is measurable.
+
+**Concrete example, demoed on `/visibility/retrieve`** with the
+query *"What does USPSTF say about statin use for primary prevention?"*:
+
+| Rank (BM25-only) | Chunk | BM25 score | What it actually is |
+|---|---|---|---|
+| 1 | `uspstf-tobacco-cessation-2021` | 0.0167 | Wrong — won by frequency of "USPSTF", "Task Force", "primary" |
+| 2 | `uspstf-statin-cvd-prevention-2022` | 0.0164 | The actual answer |
+| 3 | `uspstf-aspirin-cvd-2022` | 0.0161 | Adjacent-but-wrong |
+| 4 | `aha-cholesterol-2018` | 0.0159 | Adjacent-but-wrong |
+
+After rerank, the statin chunk moves to rank 1 because the
+cross-encoder sees query and chunk *together* and recognizes that
+"10-year cardiovascular disease risk" + "initiate a statin"
+semantically answers the query, where "behavioral interventions for
+tobacco cessation" doesn't — even though tobacco cessation has more
+keyword overlap.
+
+**Architectural callout:** all three layers degrade gracefully. No
+Voyage key → BM25-only with reciprocal-rank fusion. No Cohere key
+→ BM25 ∪ dense without rerank. Retriever logs a startup warning and
+serves; the eval gate's evidence category drops from 100% to ~85%
+but the system still runs.
+
+## "If a physician acted on a wrong recommendation, where's the most likely source of that error?"
+
+Ranked by likelihood:
+
+**1. Real citation pointing at semantically misapplied content (most likely).**
+The structural verifier checks that citations *exist* — every
+`[Resource#uuid]` references a real row. It does NOT check that the
+cited row actually *supports* the asserted claim. Failure mode:
+model writes *"ADA recommends 140/90 BP target
+[Guideline#ada-bp-target-dm-2024]"* — citation real, claim wrong
+(the chunk says 130/80). Structural layer can't catch that.
+**Closing the gap:** `evals/w2/judge.py` — Claude Haiku as a
+faithfulness judge. Stage 4 of the cookbook. Opt-in per case today;
+productionizing it on every chart-grounded turn is a v2 task.
+
+**2. Stale chart data.** Bundle warms once on chart open with a
+5-min Redis TTL. If a med is updated in OpenEMR mid-conversation,
+the agent reads the old version. Within-turn tool calls hit live
+FHIR; the cached bundle is the gap.
+
+**3. Corpus drift.** A 2024 ADA guideline gets superseded; our
+24-chunk corpus is hand-curated, not auto-refreshed. Agent confidently
+cites stale guidance. v2 mitigation: a `corpus_freshness_check` job
+that diffs against source URLs monthly.
+
+**4. OCR/extraction error.** Lab PDF misread → downstream chart
+data wrong. The bbox-match step demotes `extraction_confidence` to
+"low" when pdfplumber can't find the cited quote, but a successful
+match doesn't prove the value was read correctly.
+
+**5. Cross-patient leak.** Lowest because three independent code
+paths block it: patient-context middleware, structural verifier,
+redaction layer. No single failure leaks data.
+
+The honest summary: structural verification reliably catches "made
+up citations." The gap is "real citation, semantically wrong
+content." That's stage 4. It's in repo, OFF by default.
+
+## "Why LangGraph for orchestration, and what tradeoffs did it create?"
+
+**Why LangGraph specifically:**
+1. **State machine model fits the problem.** Supervisor → worker →
+   supervisor → answer is naturally a graph with conditional edges.
+   Coding it as nested function calls would invert control flow vs
+   how I think about it.
+2. **State reducers are explicit.** Each node returns a state delta;
+   the framework merges. I know exactly which fields are appended
+   (`extractions`, `evidence`) vs replaced (`hops`, `attachment`).
+   Implicit field merging is what makes most agent frameworks
+   debug-hostile.
+3. **Determinism.** My supervisor is a 30-line pure-Python function
+   (`route_decision`), not an LLM call. LangGraph lets that live as
+   a node like any other — no fight with the framework's expectations.
+
+**Real tradeoffs:**
+
+- **Async-only is the only sane mode.** Mixing sync and async nodes
+  corrupts state subtly. We picked async; every node is `async def`.
+  Costs zero performance, saves debugging.
+- **Stack traces span four layers.** A failure goes FastAPI →
+  LangGraph dispatcher → node body → LLM client → Anthropic.
+  Mitigation: every node has `@observe(name=...)` so Langfuse spans
+  align 1:1 with LangGraph nodes. When a turn fails, I open
+  Langfuse first, find the failing span, drop into the trace.
+- **Checkpoint serialization conflicts with rich state.** LangGraph
+  wants to JSON-serialize state at each step for resumability.
+  Our `WorkerState` carries Pydantic models that don't always
+  round-trip clean. Disabled checkpointing; resumability isn't a
+  feature we need.
+- **Debugging routing logic without the framework.** I unit-test
+  `route_decision()` directly — pure function, no graph — so
+  routing bugs surface independent of LangGraph. 16 unit tests for
+  ~30 lines of logic.
+
+**With hindsight:** for a graph this small (3 worker nodes),
+hand-rolled would have been fine — `if/elif` dispatching to
+coroutines. LangGraph paid off when I added the back-edge
+(`worker → supervisor → answer`) without rewriting the dispatcher.
+If the graph had stayed at 2 nodes I might have skipped the
+framework.
+
+## "Tell me about the hardest technical problem you had during this project."
+
+**The five-day eval-calibration regression that wasn't where I thought it was.**
+
+The setup: PR-blocking eval gate runs the 63-case suite against the
+deployed agent on every commit. After working clean on Tuesday, the
+next four calibrations all failed identically: `golden 0/3`,
+`multistep 1/3`. Same five cases, same way, deterministic across
+every run.
+
+The investigation went through four wrong hypotheses before the
+right one:
+
+**Hypothesis 1: ip_tracking race condition** in OpenEMR's
+`setupIpLoginFailedCounter()` — `SELECT ... INSERT INTO ip_tracking`
+was check-then-insert, raced under concurrent OAuth token mints.
+Fixed it with `INSERT ... ON DUPLICATE KEY UPDATE`. Re-ran
+calibration. **Same five cases failed.**
+
+**Hypothesis 2: Anthropic 529 OverloadedError.** Logs showed bursts
+of 529s during the eval. Added retry-with-backoff + jitter to the
+Anthropic client. Re-ran. **Same five cases failed.**
+
+**Hypothesis 3: cache poisoning.** Theorized that an early failed
+`warm()` write to Redis served subsequent cases an empty bundle for
+the full TTL. Made `warm()` skip the cache write when all 7 tools
+failed; partial-fail bundles got a 10-second TTL. Re-ran. **Same
+five cases failed.**
+
+**Hypothesis 4: my fixes weren't actually deployed.** Found that
+Railway's `--from-source` redeploy was reusing a cached Docker
+layer. Forced a fresh rebuild with explicit invalidation. Confirmed
+via the imageDigest field. Re-ran. **Same five cases failed.**
+
+At this point I'd burned three days. The fact that the failures
+were *deterministic* across runs was the key signal — random infra
+flake doesn't repeat the same five cases out of 63.
+
+**The real cause:** I went and read the agent service's middleware.
+`PER_IP_REQUESTS_PER_MINUTE = 10`, applied to `/agent/chat`. The
+rate limiter was originally written for `/demo/chat` (no auth) as
+an abuse gate. It got applied to `/agent/chat` (HMAC-authed) too,
+where the token mint *is* the abuse gate.
+
+The eval fires 63 cases sequentially, with multistep cases firing
+2 chats each. ~70 requests in 10 minutes from a small set of
+Railway egress IPs. Late-stage cases (positions 51-56 — golden +
+multistep) consistently tripped the per-IP bucket. The 429 response
+had empty `text`, so the `factually_consistent` rubric saw no
+expected substrings ("Lisinopril", "Atorvastatin", "hypertension",
+"diabetes") and failed.
+
+**The fix was four lines** — strip the `check_ip_quota` call from
+the HMAC-authed endpoints, leave the global concurrency cap (which
+exists to respect Anthropic's per-org TPM, not to gate abuse).
+Calibration lifted to 100% on the next run.
+
+**What I learned:** the determinism signal was telling me from day
+one. Random failures = infra; same-five failures = code path. I
+kept reaching for infra explanations because the symptoms (502s
+during deploys, 529 backoffs) *were* real, just not the dominant
+cause. Lesson: when symptoms are deterministic, the bug is in your
+code, not the cloud.
+
+The full debugging arc is in the branch history — every
+wrong-but-real fix shipped (ip_tracking race, 529 retry, cache
+poison) is in production today and earns its keep. They just weren't
+the cause of the calibration regression.
