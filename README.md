@@ -4,6 +4,25 @@ This repository is a fork of [OpenEMR](https://github.com/openemr/openemr)
 extended with an AI clinical co-pilot for primary care physicians, built
 for the Gauntlet AI Austin admission sprint.
 
+> **Week 2 final demo video:** _link landing here once recorded — see
+> [W2_DEMO_SCRIPT.md](W2_DEMO_SCRIPT.md) for the 5:00 walkthrough_
+
+## What changed since the W2 MVP grade
+
+The MVP passed Wednesday with the note *"harden the UX and reliability,
+and stronger visibility into the retrieval architecture, eval coverage,
+and worker orchestration."* Everything below shipped after that grade
+in direct response, plus the two surprise-challenge additions:
+
+| Area | Shipped | Where |
+|---|---|---|
+| **Visibility** | `/visibility` page — corpus inspector, ASCII supervisor graph, deterministic routing rule table, eval coverage with locked-baseline rates, recent supervisor decisions, **live retrieval inspector** showing BM25 / dense / rerank scores per chunk before any LLM sees them | https://copilot-agent-production-ba87.up.railway.app/visibility |
+| **UX hardening** | Retry button on every error / refusal message in the chat panel; per-status friendly HTTP error copy (502/503/504/401/403/429 each get specific actionable text instead of "Server returned 502") | `interface/modules/custom_modules/oe-module-clinical-copilot/public/js/copilot-chat.js` |
+| **Multi-format ingestion** (W2 surprise #1) | HL7 v2 ORU + ADT (structured parse, zero LLM cost), DOCX referral letters, XLSX patient workbooks, TIFF fax packets — all routed through `/agent/extract` with the appropriate `doc_type`. Cohort 5 W2 asset pack is committed as fixtures + a smoke runner | `agent-service/src/copilot/extraction/{hl7v2,docx,xlsx,tiff}.py` |
+| **Modern dashboard** (W2 surprise #2) | Next.js 15 + Auth.js v5 OIDC against OpenEMR's existing OAuth flow. Six clinical cards + bidirectional cross-app navigation. Defense in [PATIENT_DASHBOARD_MIGRATION.md](PATIENT_DASHBOARD_MIGRATION.md) | `dashboard/` |
+| **Cookbook stages 3-5** (production-evals reference) | Replay harness (`--record` / `--replay` JSONL), LLM-as-judge tier (`judge_yes_no` on Haiku for clinical-quality binary checks), A/B experiment diff (compare two recordings side-by-side) | `agent-service/evals/w2/{replay,judge,experiments}.py` |
+| **Eval gate** | Locked at **63 cases / 11 categories / 6 rubrics / 100% baseline.** PR-blocking GitHub Action enforces ≥95% per category (5pp regression delta) | `.github/workflows/eval-gate.yml` |
+
 | Document | Purpose |
 |----------|---------|
 | [SETUP.md](SETUP.md) | Bring the stack up locally (`docker compose up -d`) |
@@ -23,8 +42,20 @@ for the Gauntlet AI Austin admission sprint.
   https://openemr-production-0996.up.railway.app/
 - **Modern dashboard** (Next.js port of the patient chart):
   https://openemr-dashboard-production.up.railway.app/
+- **System visibility page** (corpus, routing, eval coverage, live retrieval inspector):
+  https://copilot-agent-production-ba87.up.railway.app/visibility
 - **Standalone agent UI** (token-less demo / fallback):
   https://copilot-agent-production-ba87.up.railway.app/
+
+**Reviewer entry points:**
+
+- **No login required:**
+  - The visibility page above (corpus, routing, eval coverage, live retrieval inspector)
+  - The standalone agent UI (token-less /demo/chat)
+- **OpenEMR login required:**
+  - The embedded co-pilot panel (Farrah Rolle is a good demo patient with rich data)
+- **OAuth flow on first hit:**
+  - The Next.js dashboard (signs in against OpenEMR's existing OIDC server)
 
 **Stack:**
 
