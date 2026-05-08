@@ -56,11 +56,20 @@ def test_lab_tool_schema_keeps_other_top_level_fields():
 
 
 def test_intake_tool_schema_omits_document_reference_id():
+    """The Anthropic tool schema strips document_reference_id (the
+    server fills it in after extraction; we don't want the LLM
+    inventing one). The fields the LLM is responsible for stay in
+    `properties`; demographics + chief_concern are *contractually*
+    required via the model_validator's auto-warn rather than
+    Pydantic-required (see test_schemas.py for the auto-warn proofs),
+    so the tool schema does not list them under `required` — but
+    they must still appear under `properties` so the LLM can fill
+    them in."""
     schema = build_extraction_tool_schema(IntakeFormExtraction)
     assert "document_reference_id" not in schema["properties"]
     assert "document_reference_id" not in schema.get("required", [])
-    # demographics is still required from the model's POV
-    assert "demographics" in schema["required"]
+    assert "demographics" in schema["properties"]
+    assert "chief_concern" in schema["properties"]
 
 
 def test_citation_schema_omits_source_id_and_bbox():

@@ -241,17 +241,24 @@ def compare_baseline(
       - its current rate is more than ``delta`` worse than the
         baseline rate for the same category
     """
+    # Float epsilon: a 5pp drop expressed as 1.00 - 0.95 = 0.05 in math
+    # but 0.050000000000000044 in IEEE 754. A naive `>` would treat that
+    # as a regression and spuriously fail the gate. We tolerate a tiny
+    # tolerance well below any realistic eval-rate difference (a single
+    # case flip on a 100-case suite is 0.01 = 100x bigger than this).
+    _FLOAT_EPS = 1e-9
+
     fails: list[str] = []
     current = report["summary"]["category_rates"]
     base = baseline.get("category_rates", {})
 
     for category, rate in current.items():
-        if rate < floor:
+        if rate < floor - _FLOAT_EPS:
             fails.append(
                 f"{category}: rate {rate:.0%} below floor {floor:.0%}"
             )
         baseline_rate = base.get(category)
-        if baseline_rate is not None and (baseline_rate - rate) > delta:
+        if baseline_rate is not None and (baseline_rate - rate) - delta > _FLOAT_EPS:
             fails.append(
                 f"{category}: regressed from {baseline_rate:.0%} to {rate:.0%} "
                 f"(>{delta:.0%} drop)"

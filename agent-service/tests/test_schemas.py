@@ -366,20 +366,29 @@ def test_intake_form_extraction_minimum_valid():
     assert ex.warnings == []
 
 
-def test_intake_form_extraction_missing_chief_concern_requires_warning():
-    """If chief_concern is None, the warnings list must explain why —
-    the W2 schema_valid rubric considers a silently-empty intake to be
-    a schema violation."""
-    with pytest.raises(ValidationError):
-        IntakeFormExtraction(
-            document_reference_id="doc-uuid-1234",
-            demographics=_demographics(),
-            chief_concern=None,
-            warnings=[],  # no warning, no chief concern → reject
-        )
+def test_intake_form_extraction_missing_chief_concern_auto_warns():
+    """If chief_concern is None and the operator didn't add a warning
+    themselves, the model_validator must auto-append one. The W2
+    schema_valid rubric considers a silently-empty intake (no reason
+    for visit, no warning) to be a schema violation; this validator
+    makes the violation impossible by making it self-document.
+
+    Contract change since the v1 LLM-only ingestion: non-intake
+    sources (XLSX workbooks, HL7 ADT, DOCX referrals) legitimately
+    omit chief_concern. We *warn*, we don't reject."""
+    ex = IntakeFormExtraction(
+        document_reference_id="doc-uuid-1234",
+        demographics=_demographics(),
+        chief_concern=None,
+        warnings=[],
+    )
+    assert ex.chief_concern is None
+    assert any("chief_concern" in w.lower() for w in ex.warnings)
 
 
 def test_intake_form_extraction_missing_chief_concern_with_warning_ok():
+    """Operator-supplied warning that already covers the missing field
+    is honored — the validator must not duplicate it."""
     ex = IntakeFormExtraction(
         document_reference_id="doc-uuid-1234",
         demographics=_demographics(),
@@ -387,17 +396,29 @@ def test_intake_form_extraction_missing_chief_concern_with_warning_ok():
         warnings=["chief concern field blank on page 1"],
     )
     assert ex.chief_concern is None
+    # Validator must not duplicate-append a generic warning when the
+    # operator already wrote a more specific one
+    assert len(ex.warnings) == 1
+    assert "blank on page 1" in ex.warnings[0]
 
 
-def test_intake_form_extraction_missing_demographics_fails():
-    with pytest.raises(ValidationError):
-        IntakeFormExtraction(
-            document_reference_id="doc-uuid-1234",
-            chief_concern=ChiefConcern(
-                text="check up",
-                citation=_citation("chiefConcern", "check up"),
-            ),
-        )  # type: ignore[call-arg]
+def test_intake_form_extraction_missing_demographics_auto_warns():
+    """Parallel guarantee for the demographics block. Same rationale:
+    multi-format ingestion means demographics may not appear on every
+    source (an HL7 lab feed has the patient in MSH, not a demographics
+    block; an XLSX workbook may have only labs). The validator must
+    surface this so the operator review screen doesn't render an
+    intake with no patient identification AND no warning."""
+    ex = IntakeFormExtraction(
+        document_reference_id="doc-uuid-1234",
+        chief_concern=ChiefConcern(
+            text="check up",
+            citation=_citation("chiefConcern", "check up"),
+        ),
+        warnings=[],
+    )
+    assert ex.demographics is None
+    assert any("demographics" in w.lower() for w in ex.warnings)
 
 
 def test_intake_form_extraction_extra_field_forbidden():
@@ -427,7 +448,11 @@ def test_lab_pdf_extraction_json_schema_has_required_fields():
 
 
 def test_intake_form_extraction_json_schema_forbids_extras():
+    """document_reference_id is the only structurally-required field;
+    demographics + chief_concern are *contractually* required (the
+    model_validator auto-warns when missing) but Pydantic-required is
+    just document_reference_id. extra=forbid is the strong invariant
+    that protects against silent prompt drift adding new keys."""
     schema = IntakeFormExtraction.model_json_schema()
     assert schema["additionalProperties"] is False
-    assert "demographics" in schema["required"]
     assert "document_reference_id" in schema["required"]

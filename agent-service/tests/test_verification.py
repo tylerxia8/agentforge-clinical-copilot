@@ -38,7 +38,7 @@ def test_structural_fails_uncited_clinical_claim():
     text = "She had a recent ED visit for chest pain."
     tr = _tr([])
     v = verify_structural(text, tr)
-    assert not v.passed and "no source citation" in v.reason
+    assert not v.passed and "no tool row" in v.reason
 
 
 def test_structural_passes_non_clinical_prose():

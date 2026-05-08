@@ -197,12 +197,15 @@ class IntakeFormExtraction(BaseModel):
 
     @model_validator(mode="after")
     def _missing_required_sections_must_warn(self) -> "IntakeFormExtraction":
-        # Operator-UX safety: missing chief_concern must surface as a
-        # warning so the operator review screen doesn't silently render
-        # an intake with no reason for visit. We auto-append the
-        # warning rather than raising — the LLM legitimately omits
-        # chief_concern for non-intake sources (XLSX workbooks, HL7
-        # ADT, DOCX referrals) where the field doesn't exist.
+        # Operator-UX safety: missing required-by-product sections
+        # (chief_concern, demographics) must surface as a warning so
+        # the operator review screen doesn't silently render an intake
+        # with no reason for visit / no patient identification. We
+        # auto-append the warning rather than raising — the LLM
+        # legitimately omits these for non-intake sources (XLSX
+        # workbooks, HL7 ADT, DOCX referrals) where the field doesn't
+        # exist on the source — but the downstream UI still needs
+        # to know.
         if self.chief_concern is None:
             chief_concern_warned = any(
                 "chief concern" in w.lower() or "reason for visit" in w.lower()
@@ -211,5 +214,13 @@ class IntakeFormExtraction(BaseModel):
             if not chief_concern_warned:
                 self.warnings.append(
                     "chief_concern not present in source document"
+                )
+        if self.demographics is None:
+            demographics_warned = any(
+                "demographics" in w.lower() for w in self.warnings
+            )
+            if not demographics_warned:
+                self.warnings.append(
+                    "demographics not present in source document"
                 )
         return self

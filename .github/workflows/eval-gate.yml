@@ -70,6 +70,20 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -e .
+          pip install pytest
+
+      # Unit tests run BEFORE the eval suite. They cost ~6 seconds and
+      # cover the property invariants the eval gate can't directly
+      # exercise (citation-regex contract, schema auto-warn behavior,
+      # FP-correct compare_baseline, adversarial citation rejection).
+      # Failing here is a hard fail with a fast turnaround instead of
+      # waiting 19 minutes for the eval suite to surface a property
+      # regression downstream. Addresses the W2 Thursday-MVP grader
+      # feedback: "prove the hard guarantees directly in code,
+      # especially around citation enforcement."
+      - name: Run unit-test property suite
+        run: |
+          python -m pytest tests/ -v --tb=short
 
       # Pre-flight ping: distinguish "staging agent is dark" from
       # "regression caught." Without this, a Railway redeploy hiccup
