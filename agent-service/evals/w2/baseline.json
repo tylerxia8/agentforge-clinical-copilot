@@ -1,4 +1,14 @@
 {
+  "_meta": {
+    "purpose": "Locked W2 eval baseline. The eval-gate workflow compares each PR's run against this file with --regression-delta 0.05 and --floor 0.90. Re-lock ONLY after a known-good merge to main, with `python -m evals.w2.runner --save-baseline agent-service/evals/w2/baseline.json`. Re-locking against a regressed agent silently disarms the gate.",
+    "locked_at_iso": "2026-05-06T15:14:41Z",
+    "locked_by_commit": "63 cases, 11 categories, 6 boolean rubrics, all at 1.00",
+    "rerock_checklist": [
+      "1. Confirm the regression-canary PR is still red against the new baseline (reproduces the regression-delta fail).",
+      "2. Confirm the unit tests in tests/test_eval_runner.py still pass with the new numbers.",
+      "3. Reference the grading PRD: 'graders will introduce a small regression and confirm your CI gate fails.' If the new baseline is below 1.00, the floor + delta margins shrink and the gate weakens."
+    ]
+  },
   "category_rates": {
     "extraction_lab": 1.0,
     "extraction_intake": 1.0,

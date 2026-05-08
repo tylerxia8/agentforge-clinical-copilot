@@ -160,11 +160,38 @@ left to the integrator."
   DB rows (duplicate-key error against the old ones), leaving the
   store inconsistent. Result: every encryption op throws
   `CryptoGenException: Key in drive is not compatible with key in
-  database — Exiting`. **Mitigation in this deployment:** Railway
-  persistent volume mounted at `sites/default/documents/`, seeded on
-  first boot from a baked template (`/opt/openemr-documents-template`);
-  see `Dockerfile` and `docker-entrypoint-wrapper.sh`. ARCHITECTURE
-  §11 (Sunday) tracks completion.
+  database — Exiting`, or `POST /oauth2/default/token` returns 500
+  with empty body on every grant.
+- **Mitigation in this deployment (active):** Railway persistent
+  volume mounted at `/var/www/localhost/htdocs/openemr/sites/default/documents/`
+  (volume name `agentforge-clinical-copilot-volume`), seeded on first
+  boot from a baked template at `/opt/openemr-documents-template/`;
+  see `Dockerfile` and `docker-entrypoint-wrapper.sh:19-26`.
+  Subsequent boots see an initialized volume (the seed only runs if
+  `logs_and_misc/methods/` is absent) and the drive key persists.
+- **Recovery procedure if a key-mismatch incident does occur** (e.g.,
+  the volume was added *after* an earlier ephemeral-fs deploy
+  encrypted client secrets in the DB — encountered once on
+  2026-05-08): the DB-stored client passphrases were encrypted with
+  the previous drive key and are no longer decryptable, so token
+  mint will 500 indefinitely. Recovery is a fresh OAuth client
+  registration plus an env-var swap, no data loss:
+
+  1. `POST /oauth2/default/registration` with the agent's required
+     SMART scopes — receives a new `client_id` + `client_secret`
+     whose stored passphrase is encrypted with the *current* drive
+     key on the live container.
+  2. `UPDATE oauth_clients SET is_enabled = 1 WHERE client_id =
+     '<new>'` — DCR registers clients in `is_enabled=0` by default.
+  3. Update `OPENEMR_OAUTH_CLIENT_ID` and `OPENEMR_OAUTH_CLIENT_SECRET`
+     on the agent service (Railway → auto-redeploys).
+  4. Verify: `POST /oauth2/default/token` → 200, then `POST /demo/chat`
+     for a known patient → response with non-empty `sources[]`.
+
+  Old client rows can be left in `oauth_clients` (their stale
+  passphrases are unusable so they pose no auth risk) or disabled
+  with `UPDATE oauth_clients SET is_enabled=0 WHERE client_name LIKE
+  'AgentForge Co-Pilot v%' AND id != <new id>`.
 - No code-level key rotation mechanism for DB credentials, OAuth2
   keys, or the audit-log encryption key.
 

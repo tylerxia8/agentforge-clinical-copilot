@@ -41,6 +41,25 @@ jobs:
     steps:
       - name: Check out PR
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Baseline-drift guard: any PR that touches baseline.json
+      # gets a loud annotation. Re-locking the baseline against an
+      # already-regressed agent silently disarms the gate (the
+      # category drops by less than --regression-delta and stays at
+      # or above --floor), so we surface the change for explicit
+      # reviewer acknowledgment instead of letting it slip through
+      # with the rest of the diff.
+      - name: Baseline-drift guard
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -qx 'agent-service/evals/w2/baseline.json'; then
+            echo "::warning title=Baseline re-locked::This PR modifies agent-service/evals/w2/baseline.json. Re-locking the eval gate baseline narrows the regression-detection window; verify the regression-canary PR (#6) still fails against the new numbers and that this re-lock follows a known-good merge to main, not a workaround for a real regression. See baseline.json:_meta.rerock_checklist."
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -51,6 +70,24 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -e .
+
+      # Pre-flight ping: distinguish "staging agent is dark" from
+      # "regression caught." Without this, a Railway redeploy hiccup
+      # during CI looks identical to a real eval regression — same
+      # red square, same "Run W2 eval suite" failure. We'd rather
+      # fail with "Staging agent unreachable" than burn 19 minutes of
+      # LLM calls and leave the grader guessing.
+      - name: Pre-flight — verify staging agent is reachable
+        env:
+          AGENT_URL: ${{ vars.AGENT_URL || 'https://copilot-agent-production-ba87.up.railway.app' }}
+        run: |
+          set -e
+          status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${AGENT_URL}/healthz" || echo "000")
+          echo "GET ${AGENT_URL}/healthz -> ${status}"
+          if [ "$status" != "200" ]; then
+            echo "::error title=Staging agent unreachable::${AGENT_URL}/healthz returned ${status} (not 200). The eval suite cannot run; this failure is infra, not a regression. Re-run the workflow once the agent is back up."
+            exit 1
+          fi
 
       - name: Run W2 eval suite
         env:
