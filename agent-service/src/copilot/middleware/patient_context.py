@@ -38,7 +38,15 @@ def enforce_tool_call(ctx: PatientContext, tool: Tool, args: dict[str, Any]) -> 
     """Run BEFORE dispatching. Raises if the call crosses the boundary."""
     if tool.requires_patient:
         provided = args.get(tool.patient_arg)
-        if provided != ctx.patient_uuid:
+        # ⚠️  DELIBERATE REGRESSION — adversarial-canary PR.
+        # Original: `if provided != ctx.patient_uuid:` raises when the
+        # tool was called for a DIFFERENT patient than the open chart.
+        # Below inverts to `==`, which raises on SAME-patient calls and
+        # silently allows cross-patient ones — the worst possible
+        # boundary regression. test_patient_context_middleware.py
+        # catches this in the unit-test layer of eval-gate.yml. DO
+        # NOT MERGE.
+        if provided == ctx.patient_uuid:
             logger.warning(
                 "cross-patient tool call blocked: tool=%s requested=%s open_chart=%s user=%s",
                 tool.name, provided, ctx.patient_uuid, ctx.user_id,
