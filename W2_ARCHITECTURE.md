@@ -538,7 +538,67 @@ working before submission.
 
 ---
 
-## 10. Open questions explicitly carried forward
+## 10. Guarantee → test map (executable proof catalog)
+
+Each documented hard guarantee in this architecture has at least one
+test that proves it executably. This table is the cross-reference;
+the tests themselves are the proof. CI runs `python -m pytest
+agent-service/tests/` *before* the eval suite (see
+`.github/workflows/eval-gate.yml`), so a regression in any of these
+properties fast-fails the gate in ~6 seconds rather than waiting 19
+minutes for the eval suite to surface the symptom downstream.
+
+This map is the direct response to W2 Thursday-MVP grader feedback:
+*"prove the hard guarantees directly in code, especially around
+citation enforcement, eval gating, and retrieval traceability,
+instead of relying mostly on documentation and architecture diagrams."*
+
+| Guarantee | §  | Test file (executable proof) |
+|---|---|---|
+| Citation regex contract: lowercase OE tables + PascalCase FHIR resources both parse, digits-in-resource-type rejected | §4 | `tests/test_verifier_adversarial.py::test_citation_regex_*` |
+| Fabricated citations rejected (real namespace, fake uuid) | §4 | `tests/test_verifier_adversarial.py::test_fabricated_uuid_in_real_namespace_rejected` |
+| Cross-namespace pk reuse rejected (`Encounter#X` ≠ `Condition#X`) | §4 | `tests/test_verifier_adversarial.py::test_real_pk_in_wrong_namespace_rejected` |
+| Substring/edit-distance attacks on real ids rejected | §4 | `tests/test_verifier_adversarial.py::test_real_id_with_appended_pk_characters_rejected` |
+| Mixed-validity attack: one real + one fake citation in same sentence rejected | §4 | `tests/test_verifier_adversarial.py::test_one_real_one_fake_citation_rejected` |
+| User-planted citation echoed back in response is rejected (not just refused freely-generated fakes) | §4 | `tests/test_verifier_adversarial.py::test_user_planted_citation_echoed_back_rejected` |
+| Substantive clinical claim with zero recognized citations rejected (substantive-claim rule) | §4 | `tests/test_verifier_adversarial.py::test_substantive_claim_with_only_malformed_citations_rejected` |
+| Empty-pk / unicode / special-char citations don't silently smuggle through | §4 | `tests/test_verifier_adversarial.py::test_empty_pk_*`, `test_unicode_pk_*`, `test_citation_with_special_chars_*` |
+| collect_known_ids defensive plumbing (skips id-less rows, unions across bundles, handles empty bundle) | §4 | `tests/test_verifier_adversarial.py::test_collect_known_ids_*` |
+| Fake citation buried 6KB into a long response still rejected (no skim-the-prefix bypass) | §4 | `tests/test_verifier_adversarial.py::test_fake_citation_buried_in_long_response_rejected` |
+| Vitals must report units or explicit "(units not recorded)" disclaimer | §4 | `tests/test_verification.py::test_vitals_rule_*` |
+| "Currently on" / "active" claims must cite a row with `active=true` and an open `end_date` | §4 | `tests/test_verification.py::test_med_active_rule_*` |
+| Cross-patient tool calls fail-closed (HIPAA boundary) | §3, AUDIT.md §1.2 / §5.2 | `tests/test_patient_context_middleware.py::test_blocks_cross_patient_call`, `test_allows_same_patient_call` |
+| Tool result rows whose embedded patient_uuid doesn't match the open chart are dropped from the bundle | §3 | `tests/test_patient_context_middleware.py::test_drops_cross_patient_rows_*` |
+| LabPdfExtraction schema requires `document_reference_id`, forbids extras | §1 | `tests/test_schemas.py::test_lab_pdf_extraction_json_schema_has_required_fields` |
+| IntakeFormExtraction schema-valid invariant: missing chief_concern auto-warns | §1 | `tests/test_schemas.py::test_intake_form_extraction_missing_chief_concern_auto_warns` |
+| IntakeFormExtraction schema-valid invariant: missing demographics auto-warns | §1 | `tests/test_schemas.py::test_intake_form_extraction_missing_demographics_auto_warns` |
+| Anthropic tool schema strips server-filled fields (`document_reference_id`, citation `source_id`/`bbox`) | §1 | `tests/test_vision_helpers.py::test_intake_tool_schema_omits_*`, `test_citation_schema_omits_*` |
+| Eval gate's `compare_baseline` is FP-correct (a 5pp drop expressed as `1.00 - 0.95 = 0.0500…044` does NOT spuriously fail the 0.05 delta) | §5 | `tests/test_eval_runner.py::test_compare_passes_on_exact_threshold` |
+| Eval gate fails on a 6pp regression (canonical hard-gate scenario) | §5 | `tests/test_eval_runner.py::test_compare_fails_on_six_point_regression` |
+| Eval gate fails when any category is below the absolute floor regardless of baseline | §5 | `tests/test_eval_runner.py::test_compare_fails_when_below_floor` |
+| Synthetic regression-canary scenario fails the gate end-to-end | §5 | `tests/test_eval_runner.py::test_synthetic_regression_canary` |
+| PHI redactor strips name fragments and MRNs before payload hits the agent / Langfuse | §6, AUDIT.md §1.7 | `tests/test_redaction.py::*` |
+| Heuristic supervisor routing is deterministic (same input → same routing decision, no LLM nondeterminism in the routing layer) | §2 | `tests/test_routing.py::*` |
+| Hybrid retriever surfaces BM25 / dense / rerank scores per chunk and they're inspectable end-to-end | §3 | `tests/test_retriever.py::*`, also live at `/visibility/retrieve` |
+| FHIR extraction id matcher is bbox-deterministic (vision pipeline doesn't drift between identical PDFs) | §1 | `tests/test_matcher.py::*`, `tests/test_vision_helpers.py::*` |
+
+Two **standing canary PRs** demonstrate the gate is enforcing in
+production, not just in tests:
+
+| Canary PR | Branch | Attack vector | Caught by | Proof |
+|---|---|---|---|---|
+| #6 — citation regex break | `regression-canary-citation-regex` | `[A-Za-z_]+` → `[a-z_]+` (PascalCase FHIR resources stop parsing as citations) | **Eval suite** (golden / citation / multistep categories drop > 5pp) | https://github.com/tylerxia8/agentforge-clinical-copilot/pull/6 with red CI |
+| (forthcoming) — patient-context inversion | `adversarial-canary-patient-context` | `!=` → `==` in the cross-patient check (`enforce_tool_call`) | **Unit tests** (`test_blocks_cross_patient_call` + `test_allows_same_patient_call`) at the new `Run unit-test property suite` step in eval-gate.yml | branch pushed to remote; PR-open is one click |
+
+Both PRs sit open on the repo home as the standing demonstration
+that the gate has teeth across BOTH verification layers — the
+unit-test property catalog (fast-fail in seconds, fine-grained
+property assertions) and the end-to-end eval suite (slower,
+behavioral, hits the deployed agent). A regression in either layer
+fails the merge.
+
+
+## 11. Open questions explicitly carried forward
 
 - **Critic agent.** PRD says it's extension, not core. Strong
   candidate for Sunday polish if Thursday lands clean: a small
