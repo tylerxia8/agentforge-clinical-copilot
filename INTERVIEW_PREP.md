@@ -677,3 +677,256 @@ The full debugging arc is in the branch history — every
 wrong-but-real fix shipped (ip_tracking race, 529 retry, cache
 poison) is in production today and earns its keep. They just weren't
 the cause of the calibration regression.
+
+
+# Sunday AI interview — drilled answers
+
+> Drafted ahead of the Sunday May 10 final interview. Each answer is
+> ~2-3 minutes spoken, structured as: lead claim → concrete proof
+> with file references → trade-off acknowledgment. Interviewers
+> reward honest trade-offs more than vague optimism.
+
+
+## "This project required balancing speed (one-week sprint) with reliability (clinical context, eval gates, HIPAA). How did you navigate that tension, and what would you do differently with more time?"
+
+**The lead.** I drew a hard line on what couldn't be bolted on later.
+Two things: PHI never leaving the cache, and patient-context
+boundaries fail-closed. Everything else I let myself defer — but
+documented every cut in `AUDIT.md` so the trade-offs are visible.
+
+**What I shipped Day 1 because retrofitting them would be a real
+risk:**
+
+- **PHI redactor with a token map.** Names and MRNs get replaced
+  with `PT_NAME_*` and `MRN_*` tokens *before* the agent payload
+  goes out — Anthropic and Langfuse only ever see redacted text.
+  Rehydrate at render time. If I'd shipped this in week 2, I'd
+  have had real PHI in trace logs from week 1.
+- **Patient-context middleware fail-closed**, at
+  `agent-service/src/copilot/middleware/patient_context.py`. Every
+  tool call gets a UUID compare against the open chart's UUID
+  before dispatch. Cross-patient call → raises
+  `CrossPatientAccessError`, never reaches the bridge. This is a
+  code path, not a prompt rule the model could be talked out of.
+  There's a unit test that fails if the `!=` flips to `==` —
+  actually live as one of my two regression-canary PRs on the
+  repo right now.
+- **Citation envelope on every fact, plus a structural verifier**
+  that rejects sentences whose citations don't trace back to a
+  real tool-result row. Faithfulness over fluency; a structural
+  rejection is honest, a hallucinated citation is harm.
+
+**What I deliberately deferred and tracked in `AUDIT.md`:**
+
+- JWT private-key OAuth on the FHIR bridge — currently password
+  grant, fine for dev/demo, swap planned for v2. Documented in
+  AUDIT.md §1.3.
+- Per-row ACL parity on the Next.js dashboard — currently maps
+  onto OAuth scopes, which is a coarser grain than OpenEMR's
+  per-row check. Documented in PATIENT_DASHBOARD_MIGRATION.md.
+- Mounting the Railway volume on `sites/default/documents/`
+  correctly was a Friday-night fix (with a recovery procedure now
+  documented in AUDIT.md §1.5), not Day 1.
+- LLM-as-judge tier with full clinician-graded rubrics — shipped
+  it as a binary `judge_yes_no` on Haiku for binary clinical-
+  quality checks, fine for the eval suite, but a real clinician
+  review process is a v2 thing.
+
+**Trade-off (the real one).** The corpus is 24 hand-curated chunks
+across USPSTF, ADA, ACC-AHA, CDC, ACIP. That's enough to cover the
+demo's clinical scope but it's not a real production corpus. With
+another week I'd have ColQwen2 multi-vector and a clinician-review
+pipeline for chunk additions. With another month I'd swap the
+static corpus for a queryable up-to-date guideline source and treat
+the static chunks as a tested fixture. Every cut has a row in
+`AUDIT.md` mapped to a v2 timeline. Documented, not pretended away.
+
+
+## "Walk me through your supervisor routing logic."
+
+**The lead.** It's heuristic plus deterministic, hop-capped at 3.
+No LLM call for routing. Same input always produces the same
+routing decision — verified by `tests/test_routing.py`.
+
+**The decision tree** (each turn enters the supervisor with three
+signals: user text, open patient UUID, any `attachment_pdf_id`
+from a fresh upload):
+
+1. **`attachment_pdf_id` set?** Route to `intake_extractor` worker.
+   The `doc_type` parameter splits internally between the `lab_pdf`
+   schema path and the `intake_form` schema path. No LLM call for
+   routing — the upload form sets `doc_type` explicitly.
+
+2. **No attachment, but text matches an evidence trigger?** Route
+   to `evidence_retriever` first, then chain into the answer node.
+   Triggers are an explicit token list visible on the `/visibility`
+   page: `USPSTF`, `AAFP`, `screening`, `recommend`, `indicated`,
+   plus a few more. The retriever runs hybrid RAG — BM25, then
+   Voyage dense embeddings, then Cohere rerank — and returns top-K
+   chunks alongside the patient's chart bundle.
+
+3. **No triggers but substantive question incoming?** Route directly
+   to the answer node with the warm patient bundle. Most chat turns
+   hit this path.
+
+4. **Hop cap = 3.** If somehow we're still routing after three hops,
+   force the answer node. Prevents infinite loops.
+
+**Why deterministic, not LLM-routed:**
+
+- **Auditable.** A clinician — or a grader — can read the trigger
+  token list and predict where any query goes. With LLM routing,
+  you'd need traces to debug routing decisions.
+- **Cheap.** No additional Anthropic call per turn just for routing.
+  Saves ~$0.005/turn at scale, compounds.
+- **Testable.** `tests/test_routing.py` has 8 cases — attachment
+  routing, evidence-token routing, no-trigger fallback, punctuation
+  handling. They run in 0.5 seconds in CI as part of the new
+  unit-test step in `eval-gate.yml`.
+- **Predictable.** The clinical product can't have surprise routing.
+  If the agent occasionally decides to skip the evidence retriever
+  based on LLM mood, that's a liability.
+
+**Trade-off.** Heuristic routing misses semantic nuance — *"what
+should I tell this patient about losing weight"* doesn't contain
+`recommend` or `screening`, so it doesn't trigger evidence
+retrieval. I addressed this two ways: (1) richer trigger token
+list with `programs`, `intervention`, `behavioral`, etc., and (2)
+the answer node always has the corpus available as fallback context
+for evidence-style answers. With more time I'd add an LLM-routing
+fallback as a second pass when the deterministic router scores low
+confidence — but only AFTER you can prove deterministic isn't
+enough. Premature LLM routing is just adding latency and cost for
+no clear win.
+
+
+## "Walk me through a specific regression your CI gate caught. What change introduced it, which rubric category failed, and what did you fix?"
+
+**The lead.** Yesterday I caught a real production-correctness bug in
+the gate's own comparison logic. It would have spuriously failed
+legitimate PRs at exactly 5pp drops. Not a synthetic demo — a real
+bug, in my own code, surfaced by a test I wrote.
+
+**What I changed.** I was hardening the test suite against Thursday's
+grader feedback ("prove the hard guarantees in code, not docs").
+Added a new file `tests/test_verifier_adversarial.py` — 17 cases
+hammering the citation verifier with attack vectors. Ran the full
+test suite to confirm nothing else broke. Five failures came back,
+four were stale assertions in older files, but one was structurally
+important: `test_compare_passes_on_exact_threshold` in
+`test_eval_runner.py`.
+
+**The test asserts** that a category at 0.95 against a baseline of
+1.00 — exactly a 5pp drop — should pass the gate, because the
+threshold is "more than 5pp" using strict `>`.
+
+**The failure.** Python's IEEE 754 makes `1.00 - 0.95` evaluate to
+`0.050000000000000044`. So the strict `if (baseline_rate - rate) >
+delta` check was treating an exact 5pp drop as
+`0.050000000000000044 > 0.05` — `True` — regression flagged.
+
+**The impact if uncaught.** Imagine a normal PR that nudges one
+category from 100% to 95% — well within the PRD's "5pp regression
+delta" budget. Old code would have failed CI, blocked the merge,
+sent the developer chasing a phantom regression. The grader could
+even have written a "your gate over-fires on harmless changes"
+finding.
+
+**The fix.** Added a `_FLOAT_EPS = 1e-9` epsilon and changed the
+comparison to `(baseline_rate - rate) - delta > _FLOAT_EPS`. That's
+well below any realistic eval-rate difference — a single case flip
+on a 100-case suite is 0.01, which is 1e7 times bigger than the
+epsilon. Production-correct, no behavior change for real
+regressions, but the boundary case passes cleanly.
+
+**Which CI layer caught it.** The unit-test layer of
+`.github/workflows/eval-gate.yml`, which I'd just added as a
+fast-fail step BEFORE the 19-minute eval suite. So a regression in
+property logic fast-fails in 6 seconds; a regression in agent
+behavior is caught at the eval-suite layer. Two layers, two
+different cost profiles, both wired into the same gate.
+
+**Caveat for the interviewer's expected answer.** Both my standing
+canary PRs are *deliberate* regressions — the first breaks the
+citation regex (caught by eval suite), the second flips the
+patient-context check from `!=` to `==` (caught by unit tests).
+Those are demonstrations and they sit open on GitHub as red CI
+runs. The FP epsilon was a real bug, in my own production code,
+surfaced by a test I wrote. That's the more honest answer because
+it shows the system catches its own mistakes, not just demo ones.
+
+
+## "VLMs can hallucinate field labels on scanned forms. Concretely, what did your schema validation and confidence-flagging strategy look like, and can you give an example of a case where your pipeline surfaced an unsupported or low-confidence extraction rather than silently passing it through?"
+
+**The lead.** Three layers: strict Pydantic schemas with required
+citation envelopes, pdfplumber as bbox ground-truth, and a
+`warnings` list with auto-appending validators that surface
+uncertainty rather than silently passing it.
+
+**Layer 1 — Pydantic schemas as the model contract.**
+`LabPdfExtraction` and `IntakeFormExtraction` both set
+`model_config = ConfigDict(extra="forbid")`. The LLM cannot invent
+fields the schema doesn't know about. Each `LabResult` has a
+*required* `citation: SourceCitation` co-field —
+`{source_type, source_id, page_or_section, field_or_chunk_id,
+quote_or_value, bbox}`. If the model can't produce a citation,
+validation fails; the response gets rejected and retried. Tests
+in `tests/test_schemas.py` pin every required field.
+
+**Layer 2 — pdfplumber as ground truth for bboxes.** The model
+transcribes a value and claims a quote. We then use pdfplumber-
+extracted text positions on the source PDF to verify the quoted
+text actually appears where the model said it does. **Coordinates
+are pdfplumber's, not the model's.** The model doesn't *decide*
+where things are; it just reads them. If the bbox match fails,
+the extraction fails — `tests/test_matcher.py` covers the matching
+logic.
+
+**Layer 3 — auto-warning validators.** The schema has a
+`warnings: list[str]` field. A `@model_validator(mode="after")`
+auto-appends `"chief_concern not present in source document"` if
+the model returned `null` for chief_concern without explaining.
+Same guarantee for demographics — added Friday during the
+verification-hardening pass. So the operator review screen never
+sees an intake with a missing required section AND no warning.
+Those two states are bound together by code.
+
+**Concrete example where the pipeline surfaced low-confidence
+rather than silently passing through:**
+
+The `vitals_unit_rule` in `agent-service/src/copilot/verification/
+rules.py`. Suppose the VLM reads "Temperature: 98.6" off a scanned
+intake form and outputs `temperature: 98.6` without a unit — which
+is what would happen on a poorly-scanned form where the °F symbol
+was illegible. The rule runs after the LLM responds. It scans the
+response text for vital-sign claims with a number, checks whether
+the cited row's `unit_verified` flag is `True`. If not, AND the
+response doesn't include the literal string "(units not recorded)"
+or "unit unknown", the rule rejects the response and retries.
+
+So in practice you see the agent return something like:
+
+> *"Temp 98.6 °F (units not recorded in a verified unit field;
+> value and unit string as stored) [Observation#…]"*
+
+That parenthetical isn't decorative — it's the verifier forcing
+the model to disclose the uncertainty. The alternative — silent
+pass-through of "Temperature: 98.6" — is the failure mode the rule
+prevents.
+
+**Same idea on medications.** The `med_active_state_rule` rejects
+"currently on metformin 500mg BID" if no cited row has `active=true`
+AND an open `end_date`. So the model can't hallucinate active
+medications based on a stale prescription record.
+
+**Trade-off.** The schemas + verifier won't catch a *plausible-but-
+wrong* extraction — if the VLM reads "Hemoglobin A1c: 7.4" but the
+actual value on the form is "5.4", and pdfplumber confirms the
+digit position — the citation passes structurally. The defense for
+that class of error is the `extraction_lab` eval category — 8 cases
+including intentionally noisy fixtures with known ground-truth
+values, run on every PR against the deployed agent. With more time
+I'd add OCR cross-validation as a second-pass on numeric fields
+specifically (Tesseract or AWS Textract over the bbox region, then
+cross-check against the VLM's transcribed value). Mentioned in
+W2_ARCHITECTURE.md §10 "Open questions."
