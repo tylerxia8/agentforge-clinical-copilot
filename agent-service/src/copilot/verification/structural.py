@@ -11,7 +11,17 @@ from dataclasses import dataclass
 
 # `[prescriptions#244]`, `[lists#588]`, `[MedicationRequest#abc123]` — etc.
 # Tables are lowercase OpenEMR convention; FHIR resource types are PascalCase.
-CITATION_RE = re.compile(r"\[([A-Za-z_]+)#([A-Za-z0-9_-]+)\]")
+#
+# REGRESSION-CANARY: this PR deliberately drops the uppercase character
+# class so PascalCase FHIR resource types (MedicationRequest, Condition,
+# AllergyIntolerance, Encounter, Observation, Immunization, Guideline,
+# DocumentReference) no longer parse as citations. The W2 eval gate
+# should detect this — extraction_lab, citation, evidence, and golden
+# categories all rely on PascalCase resources.
+#
+# Don't merge — this PR is the standing proof that the eval gate
+# catches real regressions per the W2 PRD's hard-gate scenario.
+CITATION_RE = re.compile(r"\[([a-z_]+)#([A-Za-z0-9_-]+)\]")
 
 # Heuristic: a sentence is "substantive" if it contains a number, a date,
 # or one of these clinical noun cues. Substantive sentences must cite.
