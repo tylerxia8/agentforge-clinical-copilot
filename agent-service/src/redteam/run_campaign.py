@@ -42,6 +42,7 @@ from uuid import UUID
 from anthropic import AsyncAnthropic
 
 from redteam.categories import CATEGORY_MODULES
+from redteam.coverage import build_coverage_report
 from redteam.judge import JudgeAgent
 from redteam.messages import (
     AttackAttempt,
@@ -50,6 +51,7 @@ from redteam.messages import (
     JudgeVerdict,
     ThreatCategory,
 )
+from redteam.orchestrator import Orchestrator, OrchestratorContext
 from redteam.red_team import RedTeamAgent, RedTeamAgentRefused
 from redteam.target import Target
 
@@ -75,14 +77,21 @@ def _runs_root() -> Path:
 
 async def run_one_campaign(
     *,
-    category: ThreatCategory,
-    hops: int,
-    cost_budget_usd: float,
+    campaign: AttackCampaign,
     out_dir: Path,
     anthropic_client: AsyncAnthropic,
     target: Target,
 ) -> dict:
-    """Run a single campaign and write results. Returns a summary."""
+    """Run a single campaign and write results. Returns a summary.
+
+    The ``campaign`` is either constructed by the CLI (``--category``
+    mode, MVP-style hardcoded) or by the Orchestrator Agent
+    (``--orchestrate`` mode). Either way this function does not care
+    where it came from — it just executes it.
+    """
+    category = campaign.category
+    hops = campaign.hop_budget
+    cost_budget_usd = campaign.cost_budget_usd
     cat_module = CATEGORY_MODULES[category]
     spec = cat_module.SPEC
     rubric = cat_module.JUDGE_RUBRIC
@@ -90,20 +99,11 @@ async def run_one_campaign(
     red_team = RedTeamAgent(client=anthropic_client)
     judge = JudgeAgent(client=anthropic_client)
 
-    campaign = AttackCampaign(
-        category=category,
-        hop_budget=hops,
-        cost_budget_usd=cost_budget_usd,
-        rationale=(
-            "MVP — hardcoded campaign launched from CLI. The Orchestrator "
-            "Agent (which would emit the rationale) is wired for the Friday "
-            "final, not the Tuesday MVP."
-        ),
-    )
-
     print(f"\n=== Campaign {campaign.campaign_id} — {category.value} ===")
     print(f"  hops={hops}  budget=${cost_budget_usd:.2f}")
     print(f"  target_patient_uuid={spec.target_patient_uuid}")
+    if campaign.rationale:
+        print(f"  rationale: {campaign.rationale}")
 
     attempts: list[AttackAttempt] = []
     verdicts: list[JudgeVerdict] = []
@@ -217,24 +217,46 @@ def _serialize_run(
 
 async def _main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="W3 MVP — run a single Red Team campaign against the deployed W2 target",
+        description=(
+            "AgentForge W3 — Red Team campaign runner against the deployed "
+            "W2 target. Three modes: --category (single), --all (every "
+            "wired category), --orchestrate N (Orchestrator Agent picks N "
+            "campaigns)."
+        ),
     )
     parser.add_argument(
         "--category",
         choices=[c.value for c in CATEGORY_MODULES],
-        help="Attack category. Omit with --all to run all wired categories.",
+        help="Run one named attack category (single-shot, MVP-style).",
     )
     parser.add_argument(
         "--all", action="store_true",
         help="Run every wired category back-to-back. For MVP submission.",
     )
     parser.add_argument(
+        "--orchestrate", type=int, metavar="N", default=0,
+        help="Hand off to the Orchestrator Agent. Runs N campaigns in a "
+             "row, each chosen by the LLM-driven planner reading prior "
+             "runs' coverage state. Per-campaign hop_budget and "
+             "cost_budget come from the Orchestrator, not the CLI.",
+    )
+    parser.add_argument(
         "--hops", type=int, default=5,
-        help="Max Red Team attempts per campaign before halting.",
+        help="Max Red Team attempts per campaign (--category and --all "
+             "modes only; --orchestrate gets hops from the Orchestrator).",
     )
     parser.add_argument(
         "--budget", type=float, default=2.00,
-        help="USD cost cap per campaign. Not enforced in MVP (no per-turn cost from /demo/chat) — recorded for future use.",
+        help="USD cost cap per campaign (--category and --all modes only; "
+             "the Orchestrator manages its own per-campaign budget against "
+             "the --total-budget ceiling).",
+    )
+    parser.add_argument(
+        "--total-budget", type=float, default=10.00,
+        help="(--orchestrate mode) USD ceiling across the whole run. The "
+             "Orchestrator halts when cost-to-date hits this. The Anthropic-"
+             "side cost is approximated by attempt count for MVP — wire to "
+             "Langfuse usage data for the Friday final.",
     )
     parser.add_argument(
         "--target-url", default=None,
@@ -242,8 +264,9 @@ async def _main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not args.all and not args.category:
-        parser.error("Specify --category <name> or --all.")
+    mode_count = (1 if args.category else 0) + (1 if args.all else 0) + (1 if args.orchestrate > 0 else 0)
+    if mode_count != 1:
+        parser.error("Specify exactly one of --category <name>, --all, or --orchestrate N.")
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -269,26 +292,79 @@ async def _main(argv: list[str]) -> int:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = _runs_root() / timestamp
 
-    categories_to_run: list[ThreatCategory] = (
-        list(CATEGORY_MODULES) if args.all
-        else [ThreatCategory(args.category)]
-    )
-
     summaries: list[dict] = []
-    for cat in categories_to_run:
-        try:
-            s = await run_one_campaign(
-                category=cat,
-                hops=args.hops,
-                cost_budget_usd=args.budget,
-                out_dir=out_dir,
-                anthropic_client=anthropic_client,
-                target=target,
+
+    if args.orchestrate > 0:
+        # Orchestrator mode — LLM-driven category selection over N campaigns.
+        orchestrator = Orchestrator(client=anthropic_client)
+        cost_to_date = 0.0
+        # Rough per-attempt cost approximation. With 5-hop campaigns at
+        # ~$0.05/hop (Red Team Sonnet + Judge Haiku + target chat), one
+        # campaign is ~$0.25. Real cost-tracking via Langfuse usage data
+        # is Friday-final work.
+        APPROX_COST_PER_ATTEMPT = 0.05
+
+        for round_idx in range(1, args.orchestrate + 1):
+            print(f"\n##### Orchestrator round {round_idx}/{args.orchestrate} #####")
+            coverage = build_coverage_report(_runs_root())
+            ctx = OrchestratorContext(
+                coverage=coverage,
+                cost_to_date_usd=cost_to_date,
+                cost_ceiling_usd=args.total_budget,
+                available_categories=list(CATEGORY_MODULES.keys()),
             )
-            summaries.append(s)
-        except Exception as e:  # noqa: BLE001 — keep the runner alive across campaigns
-            print(f"\n[CAMPAIGN ERROR] {cat.value}: {type(e).__name__}: {e}", file=sys.stderr)
-            summaries.append({"category": cat.value, "error": str(e)})
+            print(f"  coverage: {coverage.total_attempts} attempts across "
+                  f"{coverage.total_campaigns} campaigns; "
+                  f"open findings: {coverage.open_findings_count}")
+            print(f"  budget: ${cost_to_date:.2f} / ${args.total_budget:.2f}")
+
+            campaign = await orchestrator.plan_next_campaign(ctx)
+            if campaign is None:
+                print("  Orchestrator returned None — halting platform.")
+                break
+            print(f"  Orchestrator chose: {campaign.category.value} "
+                  f"(hops={campaign.hop_budget}, "
+                  f"budget=${campaign.cost_budget_usd:.2f})")
+
+            try:
+                s = await run_one_campaign(
+                    campaign=campaign,
+                    out_dir=out_dir,
+                    anthropic_client=anthropic_client,
+                    target=target,
+                )
+                summaries.append(s)
+                cost_to_date += s["attempts"] * APPROX_COST_PER_ATTEMPT
+            except Exception as e:  # noqa: BLE001
+                print(f"\n[CAMPAIGN ERROR] {campaign.category.value}: "
+                      f"{type(e).__name__}: {e}", file=sys.stderr)
+                summaries.append({"category": campaign.category.value, "error": str(e)})
+
+    else:
+        # Single or --all mode — hardcoded categories.
+        categories_to_run: list[ThreatCategory] = (
+            list(CATEGORY_MODULES) if args.all
+            else [ThreatCategory(args.category)]
+        )
+
+        for cat in categories_to_run:
+            campaign = AttackCampaign(
+                category=cat,
+                hop_budget=args.hops,
+                cost_budget_usd=args.budget,
+                rationale="CLI-launched campaign (--category or --all mode).",
+            )
+            try:
+                s = await run_one_campaign(
+                    campaign=campaign,
+                    out_dir=out_dir,
+                    anthropic_client=anthropic_client,
+                    target=target,
+                )
+                summaries.append(s)
+            except Exception as e:  # noqa: BLE001 — keep the runner alive across campaigns
+                print(f"\n[CAMPAIGN ERROR] {cat.value}: {type(e).__name__}: {e}", file=sys.stderr)
+                summaries.append({"category": cat.value, "error": str(e)})
 
     # Summary JSON for grader-friendly reading
     summary_path = out_dir / "_summary.json"
