@@ -17,7 +17,7 @@ service layer that an AI agent can target without resorting to raw SQL**.
 It is also a 25-year-old codebase that ships with several defaults a
 hospital CTO would not put into production, and several data-model
 realities that an agent must be designed *around*, not *on top of*. The
-five findings below shaped every decision in [ARCHITECTURE.md](ARCHITECTURE.md):
+five findings below shaped every decision in [W1_ARCHITECTURE.md](W1_ARCHITECTURE.md):
 
 **1. Authorization is role-based, not patient-based.** `PatientService`,
 `EncounterService`, and the FHIR controllers gate access on ACL
@@ -111,7 +111,7 @@ left to the integrator."
   (`IPatientCompartmentResourceService`) is not actually enforced at
   query time. **Impact for the agent:** a chat tool with broad clinician
   scope can surface any patient. We must implement
-  patient-context middleware (see [ARCHITECTURE.md](ARCHITECTURE.md) §3).
+  patient-context middleware (see [W1_ARCHITECTURE.md](W1_ARCHITECTURE.md) §3).
 
 ### 1.3 API authentication (OAuth2 + SMART-on-FHIR)
 
@@ -520,7 +520,7 @@ delete; `form_soap` has no `deleted` column.
 names but **no allergies, no labs, and minimal medications**. Useful
 for UI testing; useless as an agent eval set. We will need to either
 seed Synthea-generated data or hand-craft adversarial cases (see
-[ARCHITECTURE.md](ARCHITECTURE.md) §6 — Eval).
+[W1_ARCHITECTURE.md](W1_ARCHITECTURE.md) §6 — Eval).
 
 ### Top-5 data hazards for the agent
 
@@ -644,7 +644,7 @@ retention schedule from day one.
 ## 6. What this audit changes about the agent plan
 
 These are the audit findings that became hard requirements in
-[ARCHITECTURE.md](ARCHITECTURE.md):
+[W1_ARCHITECTURE.md](W1_ARCHITECTURE.md):
 
 1. **A patient-context middleware is non-negotiable** — every agent
    tool call carries a `patient_uuid` derived from the session's
@@ -666,6 +666,6 @@ These are the audit findings that became hard requirements in
 6. **Anthropic direct API for dev; document AWS Bedrock as the
    production target** — both BAA-eligible per §5.6.
 
-The agent itself is described in [ARCHITECTURE.md](ARCHITECTURE.md);
+The agent itself is described in [W1_ARCHITECTURE.md](W1_ARCHITECTURE.md);
 the user it serves and the use cases that justify each capability are
 in [USERS.md](USERS.md).

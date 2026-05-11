@@ -28,8 +28,10 @@ in direct response, plus the two surprise-challenge additions:
 | [SETUP.md](SETUP.md) | Bring the stack up locally (`docker compose up -d`) |
 | [AUDIT.md](AUDIT.md) | Security / performance / architecture / data-quality / compliance audit of the OpenEMR codebase |
 | [USERS.md](USERS.md) | Target user (PCP, 20-patient day) and the use cases the agent addresses |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Week 1 AI integration plan — verification, observability, failure modes, scaling |
+| [W1_ARCHITECTURE.md](W1_ARCHITECTURE.md) | Week 1 AI integration plan — verification, observability, failure modes, scaling |
 | [W2_ARCHITECTURE.md](W2_ARCHITECTURE.md) | **Week 2** multimodal evidence agent — schemas, vision pipeline, hybrid RAG, supervisor + worker graph, eval gate |
+| [THREAT_MODEL.md](THREAT_MODEL.md) | **Week 3** attack surface map for the adversarial platform — 6 categories, highest-risk findings, coverage prioritization |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **Week 3** multi-agent adversarial-platform architecture — Orchestrator / Red Team / Judge / Documentation agents, inter-agent comms, regression harness, observability |
 | [PATIENT_DASHBOARD_MIGRATION.md](PATIENT_DASHBOARD_MIGRATION.md) | **Week 2 surprise port** — defense of Next.js 15 + Auth.js v5 framework choice for the FHIR-backed patient dashboard |
 | [COSTS.md](COSTS.md) | W1 cost & scale projections (100 → 100K users) |
 | [W2_COSTS.md](W2_COSTS.md) | **Week 2** cost & latency report — vision / RAG / multi-format / cookbook tier / dashboard, p50/p95, bottleneck analysis |
