@@ -44,6 +44,23 @@ def _redteam_runs_dir() -> Path:
 
 
 def _vulns_dir() -> Path:
+    """Where the /adversarial page reads vuln reports from.
+
+    Resolution order:
+    1. ``agent-service/vulns/`` (the deploy-mirror; present in the
+       Docker image when the Dockerfile's COPY vulns/ ran)
+    2. ``<repo-root>/vulns/`` (canonical; what the Documentation
+       Agent writes to)
+
+    Local development sees both — the mirror takes precedence because
+    if the operator running locally went to the trouble of refreshing
+    the mirror, it's the more up-to-date copy. CI / deployed
+    containers only see (1) since the repo root isn't in their
+    build context.
+    """
+    mirror = _agent_service_root() / "vulns"
+    if mirror.exists():
+        return mirror
     return _repo_root() / "vulns"
 
 

@@ -22,6 +22,14 @@ RUN pip install --upgrade pip && pip install -e .
 # src/) isn't distracted by the eval-suite tree.
 COPY evals/ ./evals/
 
+# vulns/ is a deploy-mirror of the canonical repo-root vulns/ — see
+# agent-service/vulns/README.md for the sync workflow. The
+# /adversarial visibility page reads this at /app/vulns/.
+# Canonical Documentation Agent output continues to land at
+# repo-root /vulns/; a `cp -r vulns agent-service/` before each
+# deploy keeps the mirror current.
+COPY vulns/ ./vulns/
+
 EXPOSE 8000
 
 # Container-level liveness probe. Railway's restart policy uses this to
