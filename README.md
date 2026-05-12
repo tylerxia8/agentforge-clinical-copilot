@@ -41,6 +41,17 @@ in direct response, plus the two surprise-challenge additions:
 | [W2_PRESEARCH.md](W2_PRESEARCH.md) | W2 architectural-discovery checklist (16 questions) — design rationale for the Clinical Co-Pilot |
 | [PRESEARCH.md](PRESEARCH.md) | **Week 3** architectural-discovery checklist (11 sections × 3 phases) — design rationale for the adversarial platform that attacks the W2 target |
 
+**W3 hard gate — deployed target URL** (the live system the adversarial
+platform attacks; required with every checkpoint per the W3 PRD):
+
+  https://copilot-agent-production-ba87.up.railway.app
+
+Health check: `GET /healthz` → `{"status":"ok"}`. The Red Team Agent's
+`httpx.AsyncClient` (`agent-service/src/redteam/target.py`) points at
+this base URL by default; every attempt in
+`agent-service/evals/redteam_runs/` records the real status code +
+response body from this endpoint. Nothing is mocked.
+
 **Deployed apps:**
 
 - **Embedded co-pilot** (PHP module rendered into the patient chart):
