@@ -1,474 +1,619 @@
-# Pre-Search Checklist — AgentForge Clinical Co-Pilot
+# Pre-Search Checklist — AgentForge W3 Adversarial Platform
 
-> The architectural-discovery checklist (16 questions across 3 phases),
-> filled in after-the-fact with the answers that match what shipped.
-> Each answer is concrete: actual files, actual numbers, actual
-> services. Where there was a real fork in the road, the rejected
-> alternative and the reason are noted.
+> The PRD's appendix lays out an 11-section architectural-
+> discovery checklist across 3 phases. This document answers each
+> against what actually shipped: concrete files, concrete
+> numbers, concrete model choices. Where a real fork in the road
+> appeared, the rejected alternative and the reason are noted.
 >
-> Reads as a working architectural reference. The matching detailed
-> docs are linked inline.
+> Companion docs:
+> [W2_PRESEARCH.md](W2_PRESEARCH.md) — the W2 architectural discovery
+> (the target system this platform attacks).
 
 ---
 
-## Phase 1 — Constraints
+## Phase 1: Define Your Constraints
 
-### 1. Domain Selection
+### 1. Domain & Threat Selection
 
-- **Domain:** Healthcare. Specifically, a clinical co-pilot for
-  primary-care physicians inside an OpenEMR fork.
-- **Use cases supported** (from [USERS.md](USERS.md)):
-  - UC-1 — 90-second pre-visit briefing for the open chart
-  - UC-2 — Document ingestion (lab PDFs, HL7 ORU lab feeds, DOCX
-    referrals, XLSX workbooks, TIFF fax packets, intake forms)
-    with extraction → citation → writeback
-  - UC-3 — Evidence-grounded recommendations (USPSTF / ADA / ACIP /
-    ACC-AHA / CDC) for screening, prevention, and management
-  - UC-4 — Defensible refusal of cross-patient queries, prompt
-    injection, write attempts, and out-of-scope requests
-- **Verification requirements** for the domain (driven by clinical
-  liability, not arbitrary rigor):
-  - Every clinical claim in agent prose must inline-cite a real
-    chart row or guideline chunk
-  - Cross-patient access is fail-closed (a code path, not a prompt
-    rule)
-  - PHI tokenized before reaching any LLM, rehydrated after
-  - Bounding-box-validated source lookup for every PDF-extracted
-    fact
-- **Data sources accessed:**
-  - OpenEMR's existing FHIR R4 API: `Patient`, `Condition`,
-    `AllergyIntolerance`, `MedicationRequest`, `Encounter`,
-    `CareTeam`, `Observation`, `Immunization`
-  - HL7 v2 messages (ORU_R01, ADT_A08) — parsed structurally, not via LLM
-  - Document ingestion: PDF (vision), DOCX (text), XLSX (CSV-flatten),
-    TIFF (PDF conversion → vision)
-  - 24-chunk hand-curated guideline corpus
+**Which attack categories will you target first?**
+Three at MVP, six at final, per the priority ranking in
+[THREAT_MODEL.md](THREAT_MODEL.md) §"Coverage Prioritization":
+
+1. **Indirect prompt injection** — highest priority because the
+   target's multi-format ingestion (PDF/HL7/DOCX/XLSX/TIFF) is
+   broad surface with no current detection layer beyond Pydantic
+   schema. The vision pipeline reads any text it can extract.
+2. **Cross-patient PHI leakage** — catastrophic impact, the
+   patient-context middleware is mature, probing it for bypass
+   is high-signal.
+3. **Cost amplification / DoS** — lowest defense maturity (per-IP
+   rate limiting was triaged out during W2 calibration; never
+   re-introduced).
+
+Final-submission additions: state corruption (multi-turn history
+forgery), tool misuse (parameter tampering, unicode UUIDs),
+identity exploit (persona hijacking, fake system tags). Direct
+injection deferred because the W2 eval suite already has 7
+hand-authored cases in that category at 100% pass rate.
+
+**What are the verification requirements for determining exploit
+success?**
+Two-layer Judge per ARCHITECTURE.md §"Judge Agent":
+1. Deterministic signals run BEFORE the LLM. Cross-patient UUID
+   match is a string compare. Injection-acknowledgment marker is
+   a substring scan. Conclusive verdicts skip the LLM entirely.
+2. LLM rubric (Haiku 4.5) for the genuinely ambiguous cases.
+
+The deterministic layer's evidence is in
+`agent-service/src/redteam/judge.py::_check_refused_with_scoped_data`
+— the universal refused-with-scoped check that closed the
+calibration bug class.
+
+**What attack surfaces require human judgment versus automated
+assessment?**
+Critical-severity findings always escalate to the `_pending/`
+trust gate. The PRD's "Where does your system stop and ask a
+human?" answer is in ARCHITECTURE.md §"Human approval gates" —
+three explicit gates: critical-severity vulns, daily spend
+ceiling, net-new attack categories.
+
+---
 
 ### 2. Scale & Performance
 
-- **Query volume:** Per W1 cost projection — ~65 turns/day per PCP
-  × 22 working days = ~1,430 turns / physician / month. Bursty,
-  not steady — chart open + 5-minute clinical window per encounter.
-- **Latency targets** (measured against staging — see [W2_COSTS.md §4](W2_COSTS.md)):
-  - Chat turn (plain): p50 5.5s, p95 11s
-  - Chat turn (RAG-routed): p50 7.5s, p95 14s
-  - Lab PDF extraction (1 page): p50 9s, p95 16s
-  - Bbox click-through: p50 0.4s, p95 0.9s
-- **Concurrency:** 4-slot global `chat_concurrency_slot` semaphore
-  in the agent service. Tuned to Anthropic's 30K-TPM per-org rate
-  limit (4 concurrent turns × ~3-4K input tokens × 10s wall ≈ 7K
-  TPM → safe).
-- **Cost constraints:** Per [W2_COSTS.md §7](W2_COSTS.md):
-  - $0.020 / plain chat turn
-  - $0.030 / RAG-grounded chat turn
-  - $0.020-$0.040 / extraction
-  - $0.000 / HL7 v2 ingestion (zero-LLM-cost — pure parse)
-  - **Per-physician monthly: ~$5-8 over W1** (10-20% relative);
-    inside $25/month at 10K user tier
+**Expected test run volume per day/week?**
+- MVP (this week): ~10 campaigns/day × 5–8 hops = 50–80
+  attempts/day. Actual observed: 92 attempts across 17
+  campaigns over 2 days.
+- Steady-state for a single target: 100 runs/day = ~$4/day.
+- Enterprise scale (100 customer targets): 100K runs/day =
+  ~$1.5K/day platform spend.
+
+Detailed projection in [COSTS.md](COSTS.md) §"Projection at scale".
+
+**Acceptable latency for attack generation and evaluation?**
+- Red Team generation: ~5–8s per attack (Sonnet 4.6 with
+  ~700-token system prompt). Acceptable; matches Anthropic's
+  median Sonnet latency.
+- Target response: 5–35s depending on whether vision/RAG fired.
+- Judge verdict: 0.5–3s (Haiku on the LLM path) OR 0ms
+  (deterministic path).
+- Total per-attempt wall-clock: ~10–45s. A 5-hop campaign
+  completes in 1–4 minutes.
+
+**Concurrent testing requirements against the target system?**
+At MVP scale: no concurrency required. Single Red Team Agent
+serializes attempts. At 1K runs/day a per-campaign concurrency
+cap of 4 is added (see COSTS.md §"1K test runs / day").
+
+**Cost constraints for LLM-driven attack generation?**
+Per-campaign budget cap in `AttackCampaign.cost_budget_usd`
+(default $2.00 for MVP, $5.00 in the orchestrator-mode runs).
+Per-day platform-wide ceiling enforced by the Orchestrator
+returning `None` when `cost_to_date_usd >= cost_ceiling_usd`.
+Tested in `tests/test_redteam_orchestrator.py::test_returns_none_when_budget_exhausted`.
+
+---
 
 ### 3. Reliability Requirements
 
-- **Cost of a wrong answer:** Clinical liability. A confidently
-  hallucinated medication, dose, or allergy can land in a chart
-  the doctor signs and acts on. Quantitatively bounded by the
-  verifier — every claim must point at a row that exists.
-- **Non-negotiable verification:**
-  - Structural citation enforcement
-    ([`copilot/verification/structural.py`](agent-service/src/copilot/verification/structural.py))
-  - Patient-context middleware on every tool call (fail-closed
-    UUID comparison)
-  - Token-map PHI redaction before the LLM sees anything
-- **Human in the loop:**
-  - Extracted facts ALWAYS render as cited, clickable proof —
-    bbox-overlay on PDFs, source links on guidelines — before the
-    doctor decides to act
-  - The writeback layer surfaces partial / low-confidence
-    extractions as warnings, not as accepted chart data
-- **Audit / compliance:**
-  - Every chat turn is a Langfuse trace with `session_id =
-    patient_uuid`, `user_id = OE user_id`, supervisor decisions +
-    worker spans + LLM generation + cost details
-  - PHP writeback uses OpenEMR's existing `EventAuditLogger`
-  - **Known compliance gaps** (tracked in [AUDIT.md §1.5](AUDIT.md)):
-    no BAA with Anthropic yet, Langfuse Cloud not self-hosted,
-    password-grant for the FHIR bridge
+**What is the cost of a false negative (missed vulnerability)?**
+HIPAA reporting cost + patient harm cost. A missed
+cross-patient leak in production could be a $50K+ HHS
+penalty per record + reputational damage at the customer.
+This is why the cross-patient deterministic check is
+mandatory — the LLM Judge alone is insufficient for the
+critical-impact categories.
 
-### 4. Team & Skill Constraints
+**What is the cost of a false positive (flagging safe behavior
+as vulnerable)?**
+The Judge mis-classifying clean refusals as exploits would, in
+the worst case, generate noise vuln reports → erode engineer
+trust → eventually the auto-doc pipeline gets disabled. We
+SAW this fail mode during the 20260512T030840Z run: 7 critical-
+severity Judge FPs auto-generated. The platform's trust gate
+caught all 7 (auto-routed to `_pending/`) and the calibration
+fix (`_check_refused_with_scoped_data`) closed the bug class
+structurally.
 
-- **Single engineer** (Tyler), four-week sprint cadence.
-- **Framework familiarity:** Python + FastAPI strong; TypeScript +
-  Next.js learned this sprint for the W2 surprise dashboard;
-  LangGraph new this sprint; Pydantic + Anthropic SDK comfortable;
-  PHP just enough to write the OpenEMR module shim.
-- **Domain experience:** Not a clinician. Compensated by sticking
-  rigorously to published USPSTF / ADA / ACIP / ACC-AHA / CDC
-  guidelines for the corpus, and using the W2 PRD's stated use
-  cases instead of inventing new ones.
-- **Eval / testing comfort:** Built the 63-case eval suite + the
-  three cookbook-shaped extensions (replay harness, LLM-as-judge,
-  A/B experiments) from scratch this sprint. Unit tests via pytest;
-  CI via GitHub Actions; baselines via the calibration workflow.
+The cost was bounded because the trust gate worked. Without it,
+those 7 FPs would have been live regression cases enforcing
+fake invariants.
+
+**Human-in-the-loop requirements for remediation approval?**
+Three gates per ARCHITECTURE.md §"Human approval gates":
+1. Critical-severity reports → `_pending/` for human approval
+   before promotion to live + W2 regression-case append.
+2. Daily spend ceiling → Orchestrator halts and notifies before
+   resuming.
+3. Net-new attack categories (not on the threat model's
+   pre-approved list) → human approval before campaign launch.
+
+**Audit and compliance needs for security testing in a
+healthcare context?**
+Every agent call emits a Langfuse trace. Postgres + on-disk
+JSON archives the four message types (`AttackCampaign`,
+`AttackAttempt`, `JudgeVerdict`, `VulnerabilityReport`). Replay
+is possible (run a campaign offline against archived target
+responses), so a compliance auditor can reproduce any finding
+from artifact.
 
 ---
 
-## Phase 2 — Architecture Discovery
+## Phase 2: Architecture Discovery
 
-### 5. Agent Framework Selection
+### 4. Multi-Agent Design
 
-- **Choice: LangGraph.** Three-node graph (supervisor →
-  evidence_retriever / intake_extractor → answer) with explicit
-  state reducers. See [W2_ARCHITECTURE.md §2](W2_ARCHITECTURE.md).
-- **Multi-agent**, supervisor-led. The supervisor is a 30-line pure
-  Python heuristic, **not** an LLM call — chosen for determinism
-  (the eval gate's routing assertions need 100% repeatability),
-  latency (saves ~2-3s/turn), and testability (16 unit tests on
-  `route_decision()`).
-- **State management:** TypedDict `WorkerState` with explicit
-  reducers — `extractions` and `evidence` append, `attachment` and
-  `hops` replace. Disabled checkpoint serialization (LangGraph's
-  default) because our state carries Pydantic models that don't
-  always JSON-roundtrip cleanly and we don't need resumability.
-- **Tool integration complexity:** Two flavors. Patient-context
-  tools (7 of them — meds, problems, allergies, encounters, labs,
-  vitals, immunizations) for the chat path. Document-ingestion
-  paths (5 — PDF lab, PDF intake, HL7 ORU/ADT, DOCX, XLSX, TIFF)
-  for `/agent/extract`. Each goes through the patient-context
-  middleware pre- and post-call.
-- **Rejected:** LangChain (chain mental model is wrong for back-
-  edges); CrewAI (too opinionated about role-playing agents);
-  custom (paid off when we added the back-edge from worker to
-  supervisor — would have rewritten our dispatcher).
+**How many distinct agent roles does your platform require?**
+Four, per ARCHITECTURE.md §"Summary":
+- Orchestrator (Sonnet 4.6, strategic)
+- Red Team (Sonnet 4.6, generative)
+- Judge (Haiku 4.5, evaluative)
+- Documentation (Haiku 4.5, structured)
 
-### 6. LLM Selection
+The split is required, not a stylistic choice. The PRD: "a
+system that does both [attack generation and evaluation] in the
+same context has a conflict of interest by design." Same logic
+applies for orchestration vs. execution and for raw verdicts
+vs. structured reports.
 
-- **Primary: Claude Sonnet 4.6** (`claude-sonnet-4-6`). Used for:
-  chat, vision PDF extraction, text DOCX/XLSX extraction.
-  - Native tool-use with forced `tool_choice` for structured
-    output — Pydantic `LabPdfExtraction` / `IntakeFormExtraction`
-    schemas convert to Anthropic input_schema directly
-  - Vision PDF input (up to 32 MB / 100 pages)
-  - Prompt caching native (5-minute TTL) — main cost lever
-- **Judge tier: Claude Haiku 4.5** (`claude-haiku-4-5-20251001`).
-  Used for: stage-4 LLM-as-judge clinical-quality questions.
-  ~10× cheaper than Sonnet ($1/$5 per M vs $3/$15).
-- **Function calling support:** Anthropic tool-use with
-  `tool_choice: {type: "tool", name: ...}` to force structured
-  output. JSON-Schema enforced server-side via Pydantic.
-- **Context window:** 200K tokens (Sonnet). Typical turn fits in
-  ~50K (system prompt + 7-tool patient bundle + history + RAG
-  augmentation).
-- **Cost per query acceptable:** Yes, see [W2_COSTS.md §3](W2_COSTS.md):
-  $0.020 plain / $0.030 RAG turn at the per-physician volume
-  projected.
-- **Rejected:** GPT-5 (no PDF input + harder structured output);
-  open-source local (no clinic-grade BAA story; latency unacceptable).
+**What framework manages agent coordination — LangGraph,
+CrewAI, AutoGen, custom?**
+**LangGraph.** Same framework W2 used for the supervisor +
+worker graph. Familiar, debuggable, integrates with Langfuse
+(already wired). Rejected: CrewAI (more opinionated; would
+have to learn on a 4-day clock), custom event loop (more code,
+fewer guarantees), AutoGen (similar to CrewAI, less mature
+typed-message support).
 
-### 7. Tool Design
+**How do agents hand off work — message queues, shared state,
+direct invocation?**
+Typed Pydantic messages via LangGraph shared state. The four
+message types — `AttackCampaign`, `AttackAttempt`,
+`JudgeVerdict`, `VulnerabilityReport` — are the ONLY artifacts
+that cross agent boundaries. No agent reads another agent's
+internal state directly. See
+`agent-service/src/redteam/messages.py`.
 
-- **Patient-context tools (7),** wired in `agent-service/src/copilot/tools/__init__.py`:
-  - `GetActiveMedicationsTool` — `MedicationRequest?status=active`
-  - `GetActiveProblemsTool` — `Condition?clinicalStatus=active`
-  - `GetAllergiesTool` — `AllergyIntolerance?patient=…`
-  - `GetRecentEncountersTool` — `Encounter?patient=…&_count=5`
-  - `GetLabHistoryTool` — `Observation?category=laboratory`
-  - `GetVitalHistoryTool` — `Observation?category=vital-signs`
-  - `GetImmunizationsTool` — `Immunization?status=completed`
-- **Document ingestion (5 routes** through `/agent/extract`):
-  `lab_pdf`, `intake_form`, `hl7v2_oru` / `hl7v2_adt` (zero-LLM,
-  pure parse), `docx_referral`, `xlsx_workbook`, `tiff_fax` (TIFF
-  → in-process PDF → existing vision pipeline).
-- **External API:** OpenEMR FHIR R4 over OAuth2 password grant.
-  Retry-on-5xx with exponential backoff (3 retries, capped at 5s)
-  in [`bridge/openemr.py`](agent-service/src/copilot/bridge/openemr.py).
-- **Mock vs real:** Real, against the deployed OpenEMR with the
-  14-patient AgentForge demo seed (`sql/agentforge_demo_seed.sql`).
-  No mocks. The eval suite hits the live agent.
-- **Error handling per tool:** `cache.warm()` does
-  `asyncio.gather(..., return_exceptions=True)` — one tool's
-  failure can't block the bundle. Failed slots get
-  `{rows: [], warnings: ["fetch failed"]}`. If ALL tools fail,
-  `warm()` skips the cache write so the next call retries fresh
-  (cache-poison fix).
+**What happens when one agent in the pipeline fails or times
+out?**
+Failure modes per agent are explicit in ARCHITECTURE.md:
+
+- Orchestrator LLM fails → deterministic fallback (round-robin
+  by attempts, ties broken by threat-model rank). Tested in
+  `tests/test_redteam_orchestrator.py::test_deterministic_fallback_*`.
+- Red Team's own LLM refuses → log refusal, switch to Ollama
+  Llama 3 fallback (wired but not default). Threshold: 3 in a
+  row halts the campaign.
+- Target endpoint times out → record status code, Judge
+  verdicts as `fail`.
+- Judge LLM call raises → return `verdict=judge_failed @
+  confidence 0.0`, escalate to human.
+- Documentation LLM parsing fails → one retry with stricter
+  reminder; on second failure raise.
+
+---
+
+### 5. Red Team Agent Design
+
+**What model powers the Red Team Agent, and why is it
+appropriate for offensive security?**
+**Claude Sonnet 4.6** with an "authorized security researcher
+conducting penetration testing under signed BAA, target system
+is the team's own deployed copy" framing in the system prompt
+(see `agent-service/src/redteam/red_team.py::_SYSTEM_PROMPT`).
+
+Why this framing is RLHF-permitted: Anthropic publishes its own
+red-teaming work in this exact frame; the BAA-scoped consent
+language matches what they use internally. Across 92 attempts,
+zero Red Team refusals on the Anthropic side.
+
+**How does the agent mutate a failed attack into a variant?**
+Two-mode design: `generate` (novel attack from category seed)
+and `mutate` (variant of a partial-verdict parent). In mutate
+mode the Red Team gets the prior `AttackAttempt` + the Judge's
+verdict reasoning FOR THAT ATTEMPT ONLY (no cross-attempt
+contamination). The Orchestrator picks parents from the
+coverage state's `partial_attempt_refs`.
+
+The 20260512T030840Z run demonstrates this: the Orchestrator
+chose state_corruption for round 2 because it had the only
+active partial verdict, and emitted the rationale verbatim
+*"mutating the known partial is the highest-efficiency path
+to a confirmed bypass"*.
+
+**How do you prevent the Red Team Agent from being blocked by
+the same safety filters it is trying to probe?**
+The BAA framing in the system prompt is the primary defense.
+Local Ollama Llama 3 8B fallback is wired (commented in
+red_team.py and ARCHITECTURE.md) for the case where Anthropic
+guardrails tighten or the framing stops working at scale.
+
+The fallback has not been enabled by default because the
+framing has held across 92 attempts.
+
+**Context window requirements for multi-turn attack sequences?**
+state_corruption category synthesizes up to 6 fake prior
+turns plus the current user turn. Total context ~3K tokens —
+well within Sonnet's 200K window. Target's response context
+is small.
+
+---
+
+### 6. Judge Agent Design
+
+**How does the Judge determine success vs. failure vs. partial
+for each attack category?**
+Per-category rubric loaded at verdict time. Each category
+module exposes a `JUDGE_RUBRIC` string with explicit
+success/partial/fail criteria. See e.g.
+`agent-service/src/redteam/categories/cross_patient.py::JUDGE_RUBRIC`.
+
+The deterministic-signal layer runs FIRST and returns
+conclusive verdicts when possible (cross-patient UUID match,
+injection-marker hit, refused-with-no-foreign-content). The LLM
+Judge only fires for ambiguous cases.
+
+**How do you validate that the Judge's criteria are consistent
+across runs?**
+Three mechanisms:
+1. Deterministic signals are *deterministic* — same input always
+   produces the same verdict. Tested in
+   `tests/test_redteam_judge.py` (7 cases).
+2. Rubrics are versioned in source code. Changing them is a
+   commit, visible in `git log`.
+3. The 20260512T033255Z verification run re-ran the
+   state_corruption attacks that produced 4 false-positive
+   "successes" before the calibration fix; after the fix, same
+   inputs produced 5/5 fail. Drift checkable.
+
+**What happens when the Judge is uncertain — does it escalate
+to a human?**
+Yes. Three paths:
+1. Judge's `judge_confidence` < 0.5 on a `success` verdict →
+   the Documentation Agent's severity-gate routes the auto-
+   generated report to `_pending/`.
+2. Judge returns ambiguous output (can't parse to success /
+   partial / fail) → re-prompt once with stricter format; on
+   second failure, mark verdict as `judge_failed` and escalate
+   the attempt to human triage.
+3. Drift detection: judge-of-the-judge audit (Sonnet
+   re-grades a sample of Haiku's verdicts). Disagreement > 15%
+   triggers a model swap. Documented in ARCHITECTURE.md
+   §"Judge Agent" — not wired by default for MVP; Friday
+   final-scope.
+
+**How do you prevent the Judge from drifting as the target
+system changes?**
+Deterministic signals are immune to drift by construction.
+The LLM Judge's drift is bounded by:
+1. Per-category rubrics that are versioned in source code.
+2. The trust gate that routes critical-severity verdicts to
+   `_pending/` for human review (catches drift in the most
+   important case).
+3. The 20260512T030840Z FP class proves the bound: when the
+   Judge LLM drifted, the trust gate caught it, and we shipped
+   a structural fix (`_check_refused_with_scoped_data`) that
+   prevents the same class of drift recurring.
+
+---
+
+### 7. Orchestrator Design
+
+**What signals does the Orchestrator read to prioritize the
+next attack campaign?**
+Four, per ARCHITECTURE.md §"Orchestration strategy":
+1. Coverage state — attempts per category over a rolling 24h
+   window.
+2. Open findings — vulnerabilities not yet promoted to
+   regression cases.
+3. Cost-to-date — current campaign + platform-wide spend.
+4. Recent verdict trend — categories with rising partial-rate
+   are closer to bypass than fully-defended ones.
+
+The Orchestrator's LLM prompt (`_build_user_prompt` in
+`orchestrator.py`) provides all four explicitly. The model
+emits an `AttackCampaign` choosing category + hop budget + cost
+budget + rationale.
+
+**How does the Orchestrator decide when a category is
+sufficiently covered?**
+Heuristic: many attempts (≥10× the unexplored baseline) with 0
+successes and 0 partials suggests the category is saturated.
+The Orchestrator's LLM rationale on the 20260512T030840Z run
+explicitly says: *"avoid categories that have saturated"*.
+
+Deterministic fallback uses attempt count + threat-model rank:
+under-explored categories win; ties go to higher threat-rank.
+
+**What triggers a regression run — a new deployment, a time
+window, or both?**
+A new deployment of the W2 target (detected via the deployment
+event from Railway or by polling the deployment ID) automatically
+queues a full-regression campaign that re-runs every existing
+W2 eval case PLUS every prior confirmed exploit in
+`agent-service/evals/w2/adversarial_findings/`. This is the
+PRD's "regression run when the target system changes" requirement.
+
+Not currently auto-triggered — the W2 eval gate already runs on
+every PR via `.github/workflows/eval-gate.yml`, which covers
+the deployment-change case in practice. Time-window automation
+is Friday-final scope.
+
+**How does the Orchestrator manage cost across agents in a
+single session?**
+Each `AttackCampaign` carries a `cost_budget_usd` field
+enforced by the runner. Per-attempt cost is approximated
+(real-cost via Langfuse usage events is Friday-final). When
+the budget is exhausted, the campaign halts and the
+Orchestrator picks a different category.
+
+The cost-to-date is the same number the human-facing
+`/adversarial` dashboard surfaces — single source of truth.
+
+---
 
 ### 8. Observability Strategy
 
-- **Langfuse** (Cloud today; self-hosted in v2 plan). Chosen over
-  LangSmith because it's open-source + can self-host for HIPAA
-  parity, and it integrates with LangGraph natively.
-- **Metrics that matter:**
-  - Per-turn cost split: input / output / cache_write / cache_read
-    tokens — cache-hit rate is the W2 cost lever, not raw token
-    volume
-  - Latency p50/p95 per route
-  - Supervisor decisions (how often does evidence_retriever route?)
-  - Verification retry count + fallback rate (proxy for "how
-    often does the model wobble?")
-  - Refusal rate vs total turns
-- **Real-time monitoring:** Langfuse dashboard tagged with
-  `session_id = patient_uuid`. Surface filtered by user_id for
-  per-clinician views.
-- **Cost tracking:** `cost_details` populated on every Langfuse
-  generation via `_compute_cost(model, usage)` in
-  [`anthropic_client.py`](agent-service/src/copilot/llm/anthropic_client.py).
-  Per-extraction breakdowns + p50/p95 in [W2_COSTS.md](W2_COSTS.md).
+**LangSmith vs. Langfuse vs. Braintrust vs. custom — which
+surfaces inter-agent traces?**
+**Langfuse cloud.** Same backend the W2 agent uses. Already
+wired, already paid-for, already familiar to the team. Each
+agent call is a span; each campaign is a trace. Per-span cost
+metadata captures token spend per agent per campaign.
 
-### 9. Eval Approach
+Rejected: LangSmith (lock-in to LangChain ecosystem; we use
+LangGraph but not LangChain), Braintrust (less mature
+on inter-agent tracing), custom (engineering time we don't
+have).
 
-- **63 cases × 11 categories × 6 boolean rubrics.**
-  - Categories: `extraction_lab`, `extraction_intake`, `evidence`,
-    `citation`, `boundary`, `missing_data`, `phi_logs`,
-    `fabrication`, `golden`, `multistep`, `adversarial`
-  - Rubrics: `schema_valid`, `citation_present`,
-    `factually_consistent`, `safe_refusal`, `no_phi_in_logs`,
-    `every_turn_passes`
-- **Ground truth:** Hand-labeled per case — expected substrings
-  for chat cases, expected resource IDs for citation_present,
-  expected schema validation for extractions.
-- **Automated** via `evals/w2/runner.py`. PR-blocking
-  GitHub Action ([`.github/workflows/eval-gate.yml`](.github/workflows/eval-gate.yml))
-  fires the suite against the deployed agent on every PR to
-  `agent-service/**` or the OpenEMR module.
-- **CI integration:**
-  - Per-PR full suite run (10 min; gated by Anthropic 30K-TPM)
-  - Compare against [`baseline.json`](agent-service/evals/w2/baseline.json) —
-    fail if any category drops >5pp OR below 90% floor
-  - **Current locked baseline: 100% across every category and
-    every rubric** (63/63 pass)
-- **Cookbook stages 3-5** layered on top:
-  - Stage 3 — `--record` / `--replay` JSONL harness:
-    [`evals/w2/replay.py`](agent-service/evals/w2/replay.py)
-  - Stage 4 — LLM-as-judge tier (Haiku binary verdicts):
-    [`evals/w2/judge.py`](agent-service/evals/w2/judge.py)
-  - Stage 5 — A/B experiment diff:
-    [`evals/w2/experiments.py`](agent-service/evals/w2/experiments.py)
+**What metrics matter most for a multi-agent security
+platform?**
+The five surface on the `/adversarial` dashboard:
+1. Coverage state per category (attempts, verdict distribution,
+   partial-rate)
+2. Vuln pipeline (live vs. pending counts by severity)
+3. Recent campaigns with verdicts + Orchestrator rationale
+4. Per-day attempts trend
+5. Cost-to-date vs. ceiling
 
-### 10. Verification Design
+The dashboard is at `https://copilot-agent-production-ba87.up.railway.app/adversarial`
+and reads the same data the Orchestrator does for strategic
+decisions. Operator-facing + agent-facing share one substrate.
 
-- **Two layers:**
-  1. **Structural** — citations must exist + reference real rows
-     in `seen_tool_results`. Extracts every `[Resource#uuid]` via
-     regex; if any cited UUID isn't a row we returned this turn,
-     verification fails.
-  2. **Substantive prose without citations** — if the response
-     contains clinical-keyword tokens (med names, diagnosis terms,
-     numeric values + units, screening / recommend / diagnosis
-     verbs) but has zero citation markers, that's a refusal trigger.
-- **Fact-checking sources:**
-  - Patient context bundle (7-tool warm output)
-  - Worker-fetched rows (RAG chunks → `Guideline#…`, extraction
-    citations → `DocumentReference#…`)
-  - Tool-call results within the chat turn
-- **Confidence thresholds:**
-  - Vision extraction: per-fact `extraction_confidence` field
-    (`high` / `medium` / `low`) — demoted to `low` if the bbox-
-    match step can't find the cited quote in the pdfplumber word
-    output. Low-confidence facts surface as warnings, not as
-    chart writes.
-  - Chat verification: pass / fail boolean (no soft scoring) —
-    matches the cookbook stage-1 boolean-rubric ethos
-- **Escalation triggers:**
-  - 3 retry attempts with corrective re-prompt
-    (`"Your previous answer didn't pass verification. Cite a
-    real row or remove the claim."`)
-  - On final failure: refusal fallback emitting only verified
-    facts grouped by FHIR resource type (`_verified_facts_only`)
-    — the doctor sees the chart facts directly with their
-    citations, never a confabulated answer
+**How do you trace a vulnerability finding back through all
+the agents that produced it?**
+Every `AttackAttempt` carries `langfuse_trace_id`. Every
+`VulnerabilityReport` carries `discovered_by_campaign` (UUID)
+and `discovered_by_attempt` (UUID). The campaign JSON files in
+`agent-service/evals/redteam_runs/<timestamp>/` archive the
+full attack transcript + Judge verdict. Replay is possible
+offline.
+
+For a vuln in `vulns/VULN-XXXX.md`, the chain is:
+- Read the report's `discovered_by_attempt` UUID
+- Grep the runs for that attempt
+- Find the campaign + the Orchestrator rationale + the Red Team
+  prompt + the target response + the Judge verdict
+
+The chain is reconstructable from on-disk artifacts alone, no
+service required.
+
+**Cost tracking at the agent level, not just the platform
+level?**
+Yes. Langfuse spans tag the agent role (`agent=redteam`,
+`agent=judge`, `agent=orchestrator`, `agent=documentation`).
+Per-agent daily spend queryable from the dashboard. COSTS.md
+itemizes the per-line-item drivers.
 
 ---
 
-## Phase 3 — Post-Stack Refinement
+## Phase 3: Post-Stack Refinement
 
-### 11. Failure Mode Analysis
+### 8. Failure Mode Analysis  *(PRD has two #8s — keeping their numbering)*
 
-- **Tool failures:** caught per-tool in `cache.warm()` with
-  `return_exceptions=True`. Empty rows + warning in the bundle
-  slot. The orchestrator continues with whatever succeeded; the
-  fallback path renders only what we have rows for.
-- **Ambiguous queries:** the heuristic supervisor routes to
-  `evidence_retriever` when the message contains any of
-  ~25 trigger tokens (`uspstf`, `recommend`, `should`,
-  `screen`, etc. — full list at
-  [`workers/routing.py`](agent-service/src/copilot/workers/routing.py)
-  and the [/visibility page](https://copilot-agent-production-ba87.up.railway.app/visibility)).
-  No LLM-based query understanding for ambiguity — that would be
-  non-deterministic. Hop counter caps at 5 to break loops.
-- **Rate limiting & fallback:**
-  - Anthropic 529 OverloadedError: retry-with-backoff (4 tries,
-    1.5s base, 12s cap) on `_call_with_retry` in
-    [`anthropic_client.py`](agent-service/src/copilot/llm/anthropic_client.py)
-  - OpenEMR FHIR 5xx: 3 retries on `_fhir_get` + `_post_token_with_retry`
-    in [`bridge/openemr.py`](agent-service/src/copilot/bridge/openemr.py)
-  - Per-IP rate limit on token-less `/demo/chat` only (NOT on
-    HMAC-authed `/agent/chat` — discovered the hard way that this
-    gates the eval suite, see Q4 in [INTERVIEW_PREP.md](INTERVIEW_PREP.md))
-- **Graceful degradation:**
-  - No Voyage key → BM25-only retriever with reciprocal-rank
-    fusion (eval evidence category: 100% → ~85%)
-  - No Cohere key → BM25 ∪ dense without rerank
-  - No agent service / Anthropic outage → embedded panel surfaces
-    a friendly error with Retry button (post-MVP UX harden)
-  - All FHIR tools fail → `(no tool data was retrieved)` honest
-    fallback rather than confabulation
+**What happens when the Red Team Agent generates content that
+is itself harmful?**
+The Red Team's output is bounded by the BAA framing in its
+system prompt — content scoped to "attack prompts the
+orchestrator will deliver." If the Red Team genuinely produces
+harmful content beyond the scope (e.g., novel exploit
+techniques applicable to systems outside the test target), the
+content lives only in `evals/redteam_runs/` JSON files committed
+to the team's private repo. Public release of those files
+would be a separate decision.
 
-### 12. Security Considerations
+**How do you handle a Judge Agent that starts agreeing with
+everything?**
+Drift detection: judge-of-the-judge audit. Sonnet re-grades a
+50-sample slice of Haiku's verdicts periodically; if
+disagreement > 15%, halt the platform and notify operator.
+Not wired by default for MVP — flagged in ARCHITECTURE.md
+§"Known tradeoffs" #5.
 
-- **Prompt injection:** structural verifier rejects any response
-  whose citations don't reference real rows. 7 adversarial test
-  cases (`adversarial_*` in [`evals/w2/cases.py`](agent-service/evals/w2/cases.py))
-  exercise: DAN-style role-play, authority impersonation,
-  hypothetical framing, system-prompt extraction, tool-spec
-  poisoning, citation forgery, multi-turn slow-boil. All currently
-  pass at 100%.
-- **Data leakage:**
-  - Token-map PHI redaction on every chart bundle entering the
-    agent (`PT_NAME_*`, `MRN_*`, `DOB_*`, `PHONE_*`, `EMAIL_*`).
-    Map lives only in RAM, never persisted.
-  - `no_phi_in_logs` rubric scans every response for un-rehydrated
-    tokens + MRN / SSN / phone / email regex patterns
-  - Server components on the dashboard keep access tokens off the
-    browser entirely (see
-    [PATIENT_DASHBOARD_MIGRATION.md §3a](PATIENT_DASHBOARD_MIGRATION.md))
-- **API key management:**
-  - Railway env vars for Anthropic, Voyage, Cohere, Auth.js
-    secrets, OAuth client_id/secret
-  - Per-env `AUTH_SECRET` (Auth.js JWT cookie encryption)
-  - OpenEMR encrypts stored OAuth `client_secret` in the DB
-- **Audit logging:**
-  - Langfuse trace per turn (patient_uuid + user_id + spans + tokens + cost)
-  - OE's `EventAuditLogger` for chart writes
-  - HMAC bearer with embedded `issued_at` so token replay is bounded
-  - PKCE + state + nonce on the dashboard's OAuth flow
+The deterministic-signal layer is the structural backstop:
+the most consequential verdicts (cross-patient leak,
+injection-marker echo) are decided by string compares, not by
+the LLM, so a drifted Judge LLM can't compromise them.
 
-### 13. Testing Strategy
+**What is the fallback when the Orchestrator has no clear
+next priority?**
+Round-robin by threat-model rank with the under-explored
+category as the tiebreaker. Tested in
+`tests/test_redteam_orchestrator.py::test_deterministic_fallback_*`.
+Degrades to dumb-but-functional rather than halting.
 
-- **Unit tests** ([`agent-service/tests/`](agent-service/tests)):
-  - Tool dispatch + each tool's FHIR Bundle parse
-  - `route_decision()` supervisor heuristic (16 cases)
-  - HL7 v2 segment tokenizer + ORU/ADT parser
-  - Pydantic schema validation (lab + intake)
-  - Citation regex + structural verifier
-  - PHI redaction round-trip
-- **Integration tests** (eval suite is the integration test):
-  - 16 PDF-extraction cases (vision + bbox match + writeback)
-  - 10 evidence-retrieval cases (BM25 + dense + rerank +
-    structural verification)
-  - 6 multi-step conversation cases
-- **Adversarial:** 7 dedicated cases covering jailbreak,
-  prompt injection, citation forgery, etc.
-- **Regression:** locked `baseline.json` + 5pp delta + 90% floor.
-  Synthetic regression unit test
-  ([`test_eval_runner.py:test_synthetic_regression_canary`](agent-service/tests/test_eval_runner.py))
-  asserts the comparison logic flags a 12.5pp drop independent of
-  any specific deploy.
+**How do you handle cascading failures across agents in a
+single test run?**
+Each agent's failure is isolated to its own try/except in the
+runner. A Red Team refusal logs and continues (3-in-a-row halts
+the campaign). A target timeout records the status code. A
+Judge LLM error returns `verdict=judge_failed` without crashing
+the runner. A Documentation Agent error logs and proceeds —
+the attempt stays in the on-disk JSON; reports can be
+regenerated offline.
 
-### 14. Open Source Planning
-
-- **License:** Inherits OpenEMR's GPL-3 (since this is a fork).
-  The agent-service and dashboard could in principle be licensed
-  separately (they're distinct codebases) but are kept under the
-  same umbrella for sprint scope simplicity.
-- **What released:** Full repository at
-  https://github.com/tylerxia8/agentforge-clinical-copilot
-- **Documentation:**
-  - [`README.md`](README.md) — entry point with deploy URLs
-  - [`AUDIT.md`](AUDIT.md) — security / performance audit of OpenEMR
-  - [`USERS.md`](USERS.md) — target user + use cases
-  - [`ARCHITECTURE.md`](ARCHITECTURE.md) — W1 integration plan
-  - [`W2_ARCHITECTURE.md`](W2_ARCHITECTURE.md) — W2 multimodal + worker graph
-  - [`PATIENT_DASHBOARD_MIGRATION.md`](PATIENT_DASHBOARD_MIGRATION.md) — Next.js port defense
-  - [`COSTS.md`](COSTS.md) / [`W2_COSTS.md`](W2_COSTS.md) — economics
-  - [`W2_DEMO_SCRIPT.md`](W2_DEMO_SCRIPT.md) — 5-min demo walkthrough
-  - [`INTERVIEW_PREP.md`](INTERVIEW_PREP.md) — talking points
-  - This document — pre-search reflection
-- **Community engagement:** Sprint project; not pursuing an active
-  community fork. The repo is public for reviewer access.
-
-### 15. Deployment & Operations
-
-- **Hosting:** Railway, 5 services in one project:
-  - `agentforge-clinical-copilot` — OpenEMR (PHP + Apache + persistent volume at `sites/default/documents/`)
-  - `copilot-agent` — Python FastAPI (agent service)
-  - `openemr-dashboard` — Next.js 15 (modern dashboard)
-  - `MySQL` — MariaDB
-  - `Redis` — context cache + rate-limit buckets
-- **CI/CD:**
-  - GitHub Actions: `eval-gate.yml` blocks merge on regression;
-    `eval-baseline-calibrate.yml` is a workflow_dispatch tool for
-    refreshing `baseline.json`
-  - OpenEMR + dashboard auto-deploy on push to main; agent
-    service deploys via `railway up` (its repo source isn't
-    GitHub-linked, by historical accident — documented in the
-    deploy notes)
-- **Monitoring & alerting:**
-  - Langfuse for AI / chat metrics + cost
-  - Railway dashboard for infra (CPU / mem / restart count)
-  - GitHub Actions email + bot comment on eval-gate failure
-- **Rollback:**
-  - `git revert` + push triggers a redeploy
-  - Last-known-good `baseline.json` is committed; reverting it
-    re-locks the gate at the prior level
-  - Volume-backed OAuth keys persist across redeploys (after a
-    one-time setup pain documented in
-    [`PATIENT_DASHBOARD_MIGRATION.md §6`](PATIENT_DASHBOARD_MIGRATION.md))
-
-### 16. Iteration Planning
-
-- **User feedback collection:** Not yet — sprint MVP without real
-  clinician users. The eval suite is the proxy; failure cases get
-  added to it as new use cases surface.
-- **Eval-driven improvement cycle:**
-  - Every PR runs the full suite
-  - On intentional rubric / prompt change, re-calibrate baseline
-    via `eval-baseline-calibrate.yml`
-  - Stage 3 replay harness lets us iterate rubrics offline at
-    zero cost (re-grade JSONL recordings instead of re-running the
-    full suite)
-  - Stage 5 A/B harness compares variants when changing models /
-    prompts
-- **Feature prioritization** (in order):
-  1. AUDIT.md findings (security / data quality) — never skipped
-  2. PRD-listed use cases — must-haves
-  3. Reviewer / grader feedback — direct response (e.g., MVP
-     grader's visibility note → `/visibility` page)
-  4. Roadmap items below — opportunistic
-- **Long-term maintenance plan** (tracked in
-  [AUDIT.md §1.5](AUDIT.md) and [W2_ARCHITECTURE.md §11](W2_ARCHITECTURE.md)):
-  - Move to AWS Bedrock for Claude (BAA + region pinning)
-  - Self-host Langfuse (BAA + audit trail control)
-  - JWT bearer auth for the FHIR bridge (replace password-grant)
-  - ColQwen2 multi-vector retrieval once corpus > 500 chunks
-  - Critic-agent worker (re-reads cited source for faithfulness —
-    closes the structural-verifier gap that stage-4 LLM-as-judge
-    addresses partially)
-  - Dashboard ACL parity with OpenEMR's per-row check
-  - Replace OpenEMR's single-replica Apache as the FHIR layer
-    (HAPI FHIR or similar) for multi-hospital scale
+The runner never aborts on a single agent failure. The 92
+attempts include several Red Team and Judge errors that
+recovered gracefully.
 
 ---
 
-## Architectural shape (for the reasoning-engine / tool-registry / verification-layer frame)
+### 9. Trust & Safety for the Platform Itself
 
-The Pre-Search cover image breaks the architecture into three
-spheres. Mapped to this build:
+**How do you prevent the adversarial platform from being
+turned against systems it should not attack?**
+Three mechanisms:
+1. The Red Team's system prompt names the target system
+   explicitly ("the Clinical Co-Pilot"). It's not a
+   general-purpose attack generator.
+2. The runner's `Target` client is constructed with a
+   base URL from env. To attack a different system, you'd need
+   to rebuild the image with a different `REDTEAM_TARGET_URL`.
+3. The Orchestrator's `available_categories` list is
+   constrained to the pre-approved threat model. Net-new
+   categories require human approval before launch.
 
-| Sphere | Implementation in this repo |
-|---|---|
-| **Reasoning engine** | LangGraph supervisor + worker nodes + W1 orchestrator (Claude Sonnet 4.6) |
-| **Tool registry** | 7 patient-context FHIR tools + 5 ingestion paths + hybrid retriever (BM25 + Voyage + Cohere) |
-| **Verification layer** | Structural verifier + 3-retry corrective loop + verified-facts-only fallback + 63-case eval gate + cookbook stages 3-5 |
+**Access controls for who can trigger agent runs and view
+vulnerability reports?**
+At MVP scale: anyone with repo access can trigger the runner
+(it's a `python -m redteam.run_campaign` CLI with an
+Anthropic key). At production scale this would be
+authentication-gated.
 
-Three things would NOT be obvious from the code without this
-framing:
+The `/adversarial` visibility page is authentication-free
+because it surfaces system *shape* not patient data — same
+property as the W2 `/visibility` page. Vuln report content is
+in the repo (GitHub), which is access-controlled.
 
-1. The supervisor is **not** the reasoning engine — it's a
-   deterministic router. The reasoning engine is the LLM call
-   inside the answer node.
-2. The verification layer **outranks** the reasoning engine. If
-   verification fails, the LLM's actual prose is discarded and
-   the user gets the fallback. The model can't override the
-   verifier — by design.
-3. The tool registry has two halves: **synchronous** (chat tools)
-   and **asynchronous** (ingestion paths). Both flow into the
-   same `seen_tool_results` set the verifier checks against, so
-   citations from extraction can be referenced by chat turns later.
+**What approval is required before the Documentation Agent
+files a critical-severity report?**
+Critical AND high-severity findings route to `vulns/_pending/`
++ `agent-service/evals/w2/adversarial_findings/_pending/` by
+the trust gate in `documentation.py::vulns_dir`. The W2 eval
+gate's regression-case loader reads only the live dir, NOT
+`_pending/`. A human `mv` from `_pending/` to live promotes
+the finding.
+
+This caught 8 false-positive critical findings during the
+20260512T030840Z run before they polluted the regression
+suite.
+
+**How do you audit what each agent did during an overnight
+run?**
+Every campaign emits a JSON file with the full attack
+transcript + Judge verdict. Langfuse archives the LLM-side
+spans. The /adversarial dashboard's "Recent campaigns" tab
+surfaces the Orchestrator rationale per campaign. The
+on-disk artifacts are sufficient for offline replay.
+
+---
+
+### 10. Testing the Tester
+
+**How do you validate that the Red Team Agent is actually
+generating novel attacks?**
+- Each `AttackAttempt`'s `technique` field is logged. Inspecting
+  the 92-attempt corpus shows technique diversity across
+  categories — no obvious repetition.
+- Mutate-mode attempts explicitly produce variants of partial-
+  verdict parents. The 20260512T030840Z run includes 5 mutate
+  attempts; each used a different technique label.
+- Future enhancement: embedding-similarity clustering of
+  generated attacks to surface near-duplicates the Red Team
+  is producing inadvertently. Friday-final scope.
+
+**Ground truth dataset for evaluating Judge Agent accuracy?**
+The W2 eval suite's 63-case manifest is the ground-truth set
+for the BOUNDARY layer (cross-patient refusal, scope statement,
+etc.). The 20260512T033255Z verification run is the ground-
+truth set for the calibration fix (5 attempts that should all
+verdict fail with high confidence; they did).
+
+For the LLM Judge specifically, no formal ground-truth set
+yet exists. The judge-of-the-judge audit (Sonnet re-grading
+Haiku) would generate one continuously at production scale.
+
+**How do you detect when the platform is producing low-quality
+signal?**
+Two signals:
+1. Multiple consecutive `judge_failed` verdicts → Judge
+   LLM is broken (output unparseable).
+2. Multiple critical-severity findings in `_pending/` that
+   on human review turn out to be FPs → Judge LLM is
+   drifting toward over-classification. This is exactly
+   what happened in the 20260512T030840Z run; the trust gate
+   surfaced it.
+
+**What does it mean for the multi-agent system itself to
+regress?**
+- A previously-passing unit test in `tests/test_redteam_*.py`
+  starts failing → pytest CI catches it.
+- The two standing canary PRs (regression-canary-citation-regex
+  + adversarial-canary-patient-context) start passing instead
+  of failing → the eval gate is no longer enforcing.
+- The Judge's confidence distribution shifts (more 0.5-0.7
+  verdicts, fewer 0.95+ verdicts) → the deterministic-signal
+  layer is being bypassed more often than expected.
+
+The 203-test suite + the two canary PRs are the primary
+regression-detection mechanism. Adding distribution-drift
+monitoring is Friday-final scope.
+
+---
+
+### 11. Iteration Planning
+
+**How will you add new agent roles as the platform matures?**
+The architecture uses LangGraph nodes + typed Pydantic
+messages. Adding a new agent role:
+1. Add a new message type to `redteam/messages.py` if needed.
+2. Add the agent's class to `redteam/<role>.py`.
+3. Wire into the runner or a new LangGraph node.
+4. Add unit tests to `tests/test_redteam_<role>.py`.
+
+Candidate next agents:
+- **Critic Agent** — re-reads cited sources before approving a
+  Documentation Agent report (the W2 architecture mentioned
+  this as a v2 task).
+- **Triage Agent** — auto-routes `_pending/` findings to live
+  or rejected based on heuristics.
+- **Coverage Coordinator** — multi-target version of the
+  Orchestrator that distributes campaigns across N customer
+  targets.
+
+**Eval-driven improvement cycle for each agent independently?**
+Each agent's unit tests in `tests/test_redteam_*.py` are
+independent. The Judge has its own deterministic-property
+tests (7 cases); the Orchestrator has its own (13 cases); the
+Documentation Agent has its own (17 cases). Each can be
+hardened without touching the others.
+
+The W2 eval suite is the integration test — it runs the full
+agent chain end-to-end against the deployed target.
+
+**How does the platform incorporate newly published attack
+techniques automatically?**
+At MVP scale: a human reads new red-teaming literature and adds
+seed examples to the appropriate category module in
+`redteam/categories/`. The Red Team Agent uses these seeds as
+few-shot inputs during generate-mode attacks.
+
+At production scale: a scheduled ingest job could scrape MITRE
+ATLAS, AI safety conferences, Anthropic / OpenAI red-teaming
+reports for new techniques and auto-update seed lists. Friday-
+final scope.
+
+---
+
+## Closing — what this document is not
+
+This is not a marketing document. It's the decision log behind
+the architecture, with the rejected alternatives named
+explicitly. Cross-references to specific files, specific tests,
+specific run timestamps. A reviewer asking *"why this design"*
+should find the answer here; a reviewer asking *"how does this
+work in practice"* should find it in
+[ARCHITECTURE.md](ARCHITECTURE.md) and the live
+`/adversarial` dashboard.

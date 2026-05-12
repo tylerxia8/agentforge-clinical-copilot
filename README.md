@@ -38,7 +38,8 @@ in direct response, plus the two surprise-challenge additions:
 | [COSTS.md](COSTS.md) | **Week 3** adversarial-platform cost analysis — per-attempt decomposition, dev spend, projections at 100/1K/10K/100K runs/day, architectural changes per scale |
 | [DEMO_SCRIPT.md](DEMO_SCRIPT.md) / [W2_DEMO_SCRIPT.md](W2_DEMO_SCRIPT.md) | W1 / W2 demo video scripts |
 | [INTERVIEW_PREP.md](INTERVIEW_PREP.md) | AI-interview talking points keyed to repo artifacts |
-| [PRESEARCH.md](PRESEARCH.md) | Architectural-discovery checklist (16 questions) filled in for this build — fastest way to get a complete picture in one read |
+| [W2_PRESEARCH.md](W2_PRESEARCH.md) | W2 architectural-discovery checklist (16 questions) — design rationale for the Clinical Co-Pilot |
+| [PRESEARCH.md](PRESEARCH.md) | **Week 3** architectural-discovery checklist (11 sections × 3 phases) — design rationale for the adversarial platform that attacks the W2 target |
 
 **Deployed apps:**
 
