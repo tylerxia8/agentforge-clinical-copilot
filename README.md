@@ -46,15 +46,18 @@ in direct response, plus the two surprise-challenge additions:
   https://openemr-production-0996.up.railway.app/
 - **Modern dashboard** (Next.js port of the patient chart):
   https://openemr-dashboard-production.up.railway.app/
-- **System visibility page** (corpus, routing, eval coverage, live retrieval inspector):
+- **System visibility page** (W2: corpus, routing, eval coverage, live retrieval inspector):
   https://copilot-agent-production-ba87.up.railway.app/visibility
+- **Adversarial platform dashboard** (W3: coverage, vuln pipeline, recent campaigns with Orchestrator rationale, attempts trend):
+  https://copilot-agent-production-ba87.up.railway.app/adversarial
 - **Standalone agent UI** (token-less demo / fallback):
   https://copilot-agent-production-ba87.up.railway.app/
 
 **Reviewer entry points:**
 
 - **No login required:**
-  - The visibility page above (corpus, routing, eval coverage, live retrieval inspector)
+  - **/visibility** — W2 agent introspection (corpus, routing, eval coverage, live retrieval inspector)
+  - **/adversarial** — W3 platform operator view (92 attempts of evidence, 3 live + 7 pending vulns, Orchestrator rationale per campaign)
   - The standalone agent UI (token-less /demo/chat)
 - **OpenEMR login required:**
   - The embedded co-pilot panel (Farrah Rolle is a good demo patient with rich data)
