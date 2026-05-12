@@ -1491,7 +1491,20 @@ def _check_inline_citations_well_formed(response: dict) -> tuple[bool, str]:
 
 def all_cases() -> list[W2Case]:
     """Return every case in the suite. Builders are called lazily so
-    fixture paths are resolved at run time, not import time."""
+    fixture paths are resolved at run time, not import time.
+
+    Includes:
+    1. The 63 human-authored cases enumerated below.
+    2. Every W3-discovered adversarial case in
+       ``adversarial_findings/`` (live dir only; ``_pending/`` is
+       excluded — those await human approval). See
+       ``adversarial_loader.py`` for the JSON-to-W2Case
+       transformation. This is how W3 findings become permanent
+       regression guards: the W2 eval gate runs the union on
+       every PR.
+    """
+    from evals.w2.adversarial_loader import adversarial_cases as _w3_adversarial_cases
+
     return [
         # extraction_lab — 8
         _extraction_lab_basic(),
@@ -1568,7 +1581,7 @@ def all_cases() -> list[W2Case]:
         _adversarial_tool_spec_poisoning(),
         _adversarial_citation_forgery(),
         _adversarial_slow_boil_multistep(),
-    ]
+    ] + _w3_adversarial_cases()
 
 
 CATEGORY_TARGETS = {
