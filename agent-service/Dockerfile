@@ -15,6 +15,13 @@ COPY src/ ./src/
 
 RUN pip install --upgrade pip && pip install -e .
 
+# evals/ holds the W2 eval-suite cases AND the W3 platform's
+# redteam_runs/ + adversarial_findings/ data. The /adversarial
+# visibility page reads these at runtime. Placed AFTER pip install
+# so the install-time discovery (setuptools find_packages under
+# src/) isn't distracted by the eval-suite tree.
+COPY evals/ ./evals/
+
 EXPOSE 8000
 
 # Container-level liveness probe. Railway's restart policy uses this to
