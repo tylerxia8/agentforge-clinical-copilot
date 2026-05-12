@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AgentForge — Adversarial Platform</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --warning: #d97706;
+      --success: #15803d;
+      --danger: #dc2626;
+      --critical: #991b1b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      font-size: 14px; line-height: 1.5;
+    }
+    header.app {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+    }
+    header.app h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    header.app .sub {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    header.app .sub a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    header.app .sub a:hover { text-decoration: underline; }
+    main { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    nav.tabs {
+      display: flex; gap: 4px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 24px;
+    }
+    nav.tabs button {
+      background: transparent; border: none;
+      padding: 10px 16px;
+      font-size: 13px; font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    nav.tabs button[aria-selected="true"] {
+      color: var(--text);
+      border-bottom-color: var(--accent);
+    }
+    section.tab { display: none; }
+    section.tab[aria-current="true"] { display: block; }
+    h2 { margin: 0 0 12px 0; font-size: 14px; font-weight: 600; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card .card-sub {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: -8px;
+      margin-bottom: 12px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
+      text-align: left; padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th { font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px; border-radius: 999px;
+      font-size: 11px; font-weight: 500;
+    }
+    .pill-success { background: #dcfce7; color: var(--success); }
+    .pill-warning { background: #fef3c7; color: var(--warning); }
+    .pill-fail { background: #f1f5f9; color: var(--muted); }
+    .pill-low { background: #f1f5f9; color: var(--muted); }
+    .pill-medium { background: #fef3c7; color: var(--warning); }
+    .pill-high { background: #fee2e2; color: var(--danger); }
+    .pill-critical { background: #fecaca; color: var(--critical); }
+    .pill-pending { background: #ede9fe; color: #6d28d9; }
+    .pill-cat {
+      background: #e0e7ff; color: #3730a3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .stat .v { font-size: 24px; font-weight: 600; color: var(--text); }
+    .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; }
+    .stat .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .verdict-bar {
+      display: flex;
+      height: 8px;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 4px;
+      background: #f1f5f9;
+    }
+    .verdict-bar .seg-success { background: var(--danger); }
+    .verdict-bar .seg-partial { background: var(--warning); }
+    .verdict-bar .seg-fail { background: var(--success); }
+    .verdict-bar .seg-other { background: var(--muted); }
+    .mini-bar { width: 240px; max-width: 100%; display: inline-block; vertical-align: middle; }
+    .rationale {
+      font-size: 12px;
+      color: var(--muted);
+      font-style: italic;
+      max-width: 480px;
+    }
+    code, .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    .vuln-note {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+    .empty {
+      color: var(--muted);
+      font-style: italic;
+      padding: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<header class="app">
+  <h1>AgentForge — Adversarial Platform</h1>
+  <div class="sub">
+    Live state of the W3 multi-agent adversarial AI security platform.
+    Read-only operator view of coverage, the vuln pipeline, and recent campaigns.
+    Companion to <a href="/visibility">/visibility</a> (the W2 Co-Pilot operator view).
+  </div>
+</header>
+
+<main>
+
+  <div class="stat-grid" id="overview-stats">
+    <div class="stat"><div class="v">…</div><div class="l">loading</div></div>
+  </div>
+
+  <nav class="tabs" role="tablist">
+    <button data-tab="coverage" aria-selected="true">Coverage</button>
+    <button data-tab="pipeline" aria-selected="false">Vuln pipeline</button>
+    <button data-tab="campaigns" aria-selected="false">Recent campaigns</button>
+    <button data-tab="trend" aria-selected="false">Attempts trend</button>
+  </nav>
+
+  <!-- ─── Coverage ──────────────────────────────────────────────── -->
+  <section class="tab" data-tab="coverage" aria-current="true">
+    <div class="card">
+      <h2>Coverage by attack category</h2>
+      <div class="card-sub">
+        Attempts and verdict distribution per category across every
+        recorded campaign. The Orchestrator reads this exact data to
+        prioritize the next campaign.
+      </div>
+      <table id="coverage-table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Attempts</th>
+            <th>Verdicts</th>
+            <th>Verdict mix</th>
+            <th>Partial rate</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─── Vuln pipeline ─────────────────────────────────────────── -->
+  <section class="tab" data-tab="pipeline" aria-current="false">
+    <div class="card">
+      <h2>Live findings</h2>
+      <div class="card-sub">
+        Confirmed vulnerabilities with no critical/high-severity
+        flag — auto-promoted by the Documentation Agent or
+        human-authored. The W2 eval gate enforces a regression case
+        for each via the loaded JSON sidecar.
+      </div>
+      <table id="live-vulns-table">
+        <thead>
+          <tr><th>ID</th><th>Severity</th><th>Category</th><th>Title</th><th>Status</th></tr>
+        </thead>
+        <tbody><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Pending human approval</h2>
+      <div class="card-sub">
+        Critical/high-severity findings auto-gated by the
+        Documentation Agent. NOT enforced by the W2 eval gate
+        until a human reviewer moves them out of <code>_pending/</code>.
+        The vuln-pipeline trust gate caught these — that's the
+        gate doing its job.
+      </div>
+      <table id="pending-vulns-table">
+        <thead>
+          <tr><th>ID</th><th>Severity</th><th>Category</th><th>Title</th><th>Status</th></tr>
+        </thead>
+        <tbody><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─── Recent campaigns ─────────────────────────────────────── -->
+  <section class="tab" data-tab="campaigns" aria-current="false">
+    <div class="card">
+      <h2>Recent campaigns</h2>
+      <div class="card-sub">
+        Newest first. Each row is one Red Team campaign + the
+        Orchestrator's rationale for choosing it (when LLM-planned).
+        Verdict counts show how the target's defenses fared.
+      </div>
+      <table id="campaigns-table">
+        <thead>
+          <tr>
+            <th>Ran at</th>
+            <th>Category</th>
+            <th>Attempts</th>
+            <th>Verdicts</th>
+            <th>Orchestrator rationale</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─── Attempts trend ───────────────────────────────────────── -->
+  <section class="tab" data-tab="trend" aria-current="false">
+    <div class="card">
+      <h2>Attempts per day (last 14)</h2>
+      <div class="card-sub">
+        Bar height = total attempts that day. Color split = verdict
+        distribution. Quick sanity-check that the platform is
+        actually running campaigns over time.
+      </div>
+      <table id="trend-table">
+        <thead>
+          <tr><th>Day</th><th>Attempts</th><th>Verdicts</th><th>Bar</th></tr>
+        </thead>
+        <tbody><tr><td colspan="4" class="empty">loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<script>
+'use strict';
+
+// Tab switching
+document.querySelectorAll('nav.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tabName = btn.dataset.tab;
+    document.querySelectorAll('nav.tabs button').forEach(b => {
+      b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+    });
+    document.querySelectorAll('section.tab').forEach(s => {
+      s.setAttribute('aria-current', s.dataset.tab === tabName ? 'true' : 'false');
+    });
+  });
+});
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+
+function pill(text, kind) {
+  return `<span class="pill pill-${kind}">${esc(text)}</span>`;
+}
+
+function verdictBar(verdicts, attempts) {
+  if (!attempts) return '';
+  const s = (verdicts.success || 0) / attempts * 100;
+  const p = (verdicts.partial || 0) / attempts * 100;
+  const f = (verdicts.fail || 0) / attempts * 100;
+  const o = ((verdicts.judge_failed || 0)) / attempts * 100;
+  return `
+    <div class="verdict-bar mini-bar" title="success: ${verdicts.success || 0}, partial: ${verdicts.partial || 0}, fail: ${verdicts.fail || 0}, other: ${verdicts.judge_failed || 0}">
+      <div class="seg-success" style="width:${s}%"></div>
+      <div class="seg-partial" style="width:${p}%"></div>
+      <div class="seg-fail" style="width:${f}%"></div>
+      <div class="seg-other" style="width:${o}%"></div>
+    </div>`;
+}
+
+function verdictCounts(v) {
+  return `<span class="mono">s=${v.success||0} p=${v.partial||0} f=${v.fail||0}${v.judge_failed?` jf=${v.judge_failed}`:''}</span>`;
+}
+
+function severityPill(sev) {
+  const cls = ['low','medium','high','critical'].includes(sev) ? sev : 'low';
+  return pill(sev, cls);
+}
+
+function fmtTs(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toISOString().replace('T', ' ').slice(0, 16) + 'Z';
+  } catch { return iso; }
+}
+
+function renderOverview(data) {
+  const c = data.coverage;
+  const p = data.vuln_pipeline;
+  const el = document.getElementById('overview-stats');
+  el.innerHTML = `
+    <div class="stat"><div class="v">${c.total_attempts}</div><div class="l">total attempts</div><div class="sub">across ${c.total_campaigns} campaigns</div></div>
+    <div class="stat"><div class="v">${c.per_category.length}</div><div class="l">categories exercised</div></div>
+    <div class="stat"><div class="v">${p.live_count}</div><div class="l">live vuln reports</div><div class="sub">enforced by W2 eval gate</div></div>
+    <div class="stat"><div class="v">${p.pending_count}</div><div class="l">pending review</div><div class="sub">auto-gated by trust layer</div></div>
+    <div class="stat"><div class="v">${fmtTs(c.last_run_at)}</div><div class="l">last run</div></div>
+  `;
+}
+
+function renderCoverage(data) {
+  const tbody = document.querySelector('#coverage-table tbody');
+  const rows = data.coverage.per_category;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">no campaign data yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${pill(r.category, 'cat')}</td>
+      <td><strong>${r.attempts}</strong></td>
+      <td>${verdictCounts(r)}</td>
+      <td>${verdictBar(r, r.attempts)}</td>
+      <td>${(r.partial_rate * 100).toFixed(0)}%</td>
+    </tr>
+  `).join('');
+}
+
+function vulnRow(v) {
+  return `
+    <tr>
+      <td class="mono">${esc(v.vuln_id)}</td>
+      <td>${severityPill(v.severity)}</td>
+      <td>${pill(v.category, 'cat')}</td>
+      <td>${esc(v.title)}${v.variant_of ? `<div class="vuln-note">variant of ${esc(v.variant_of)}</div>` : ''}</td>
+      <td>${pill(v.status, v.status === 'open' ? 'warning' : v.status === 'fixed' || v.status === 'validated' ? 'success' : 'low')}</td>
+    </tr>
+  `;
+}
+
+function renderPipeline(data) {
+  const live = document.querySelector('#live-vulns-table tbody');
+  const pending = document.querySelector('#pending-vulns-table tbody');
+  live.innerHTML = data.vuln_pipeline.live.length
+    ? data.vuln_pipeline.live.map(vulnRow).join('')
+    : '<tr><td colspan="5" class="empty">no live findings (clean state)</td></tr>';
+  pending.innerHTML = data.vuln_pipeline.pending.length
+    ? data.vuln_pipeline.pending.map(vulnRow).join('')
+    : '<tr><td colspan="5" class="empty">no pending findings</td></tr>';
+}
+
+function renderCampaigns(data) {
+  const tbody = document.querySelector('#campaigns-table tbody');
+  if (!data.recent_campaigns.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">no campaign data yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.recent_campaigns.map(c => `
+    <tr>
+      <td class="mono">${fmtTs(c.ran_at)}</td>
+      <td>${pill(c.category, 'cat')}</td>
+      <td><strong>${c.attempts}</strong></td>
+      <td>${verdictCounts(c.verdicts)}${verdictBar(c.verdicts, c.attempts)}</td>
+      <td><div class="rationale">${esc(c.rationale) || '<em>(no rationale recorded)</em>'}</div></td>
+    </tr>
+  `).join('');
+}
+
+function renderTrend(data) {
+  const tbody = document.querySelector('#trend-table tbody');
+  if (!data.time_series.series.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">no run data in the window</td></tr>';
+    return;
+  }
+  // Compute max attempts for width scaling
+  const maxAttempts = Math.max(1, ...data.time_series.series.map(d => d.attempts));
+  tbody.innerHTML = data.time_series.series.map(d => {
+    const w = (d.attempts / maxAttempts) * 100;
+    return `
+      <tr>
+        <td class="mono">${esc(d.day)}</td>
+        <td><strong>${d.attempts}</strong></td>
+        <td>${verdictCounts(d)}</td>
+        <td>
+          <div class="verdict-bar mini-bar" style="width:${w}%">
+            <div class="seg-success" style="width:${d.attempts ? (d.success/d.attempts*100) : 0}%"></div>
+            <div class="seg-partial" style="width:${d.attempts ? (d.partial/d.attempts*100) : 0}%"></div>
+            <div class="seg-fail" style="width:${d.attempts ? (d.fail/d.attempts*100) : 0}%"></div>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function load() {
+  try {
+    const r = await fetch('/adversarial/data');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    renderOverview(data);
+    renderCoverage(data);
+    renderPipeline(data);
+    renderCampaigns(data);
+    renderTrend(data);
+  } catch (e) {
+    document.getElementById('overview-stats').innerHTML = `
+      <div class="stat"><div class="v">!</div><div class="l">failed to load</div><div class="sub">${esc(e.message)}</div></div>
+    `;
+  }
+}
+
+load();
+</script>
+
+</body>
+</html>

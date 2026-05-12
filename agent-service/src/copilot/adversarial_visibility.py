@@ -1,0 +1,307 @@
+"""Adversarial visibility — JSON aggregator for the /adversarial page.
+
+Scans agent-service/evals/redteam_runs/ + vulns/ +
+adversarial_findings/ and produces the data the
+agent-service/src/copilot/static/adversarial.html page renders.
+
+Read-only. No LLM calls. Fast — file scan + simple aggregation,
+~50ms for the full run history. Cached for 30 seconds at the
+HTTP layer so a busy dashboard doesn't hammer the disk.
+
+Why a separate module from copilot.visibility:
+- Different data sources (W3 runs vs. W2 RAG corpus/routing)
+- Different audience (security operators vs. clinical reviewers)
+- Independently versioned — the W3 platform's visibility surface
+  evolves separately from the W2 agent's
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _agent_service_root() -> Path:
+    """The agent-service root (one level above src/)."""
+    here = Path(__file__).resolve()
+    # agent-service/src/copilot/adversarial_visibility.py → agent-service/
+    return here.parents[2]
+
+
+def _repo_root() -> Path:
+    """The repo root (one level above agent-service/)."""
+    return _agent_service_root().parent
+
+
+def _redteam_runs_dir() -> Path:
+    return _agent_service_root() / "evals" / "redteam_runs"
+
+
+def _vulns_dir() -> Path:
+    return _repo_root() / "vulns"
+
+
+def _adversarial_findings_dir() -> Path:
+    return _agent_service_root() / "evals" / "w2" / "adversarial_findings"
+
+
+# ---------------------------------------------------------------------------
+# Coverage state — categories × verdicts over the runs
+# ---------------------------------------------------------------------------
+
+
+def coverage_snapshot() -> dict[str, Any]:
+    """Per-category attempt counts + verdict distribution across
+    every run on disk."""
+    runs_dir = _redteam_runs_dir()
+    if not runs_dir.exists():
+        return {
+            "total_attempts": 0,
+            "total_campaigns": 0,
+            "per_category": [],
+            "first_run_at": None,
+            "last_run_at": None,
+        }
+
+    per_category: dict[str, dict[str, int]] = defaultdict(lambda: {
+        "attempts": 0, "success": 0, "partial": 0, "fail": 0, "judge_failed": 0,
+    })
+    total_attempts = 0
+    total_campaigns = 0
+    first_run_at: datetime | None = None
+    last_run_at: datetime | None = None
+
+    for campaign_path in runs_dir.glob("**/campaign_*.json"):
+        try:
+            data = json.loads(campaign_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        total_campaigns += 1
+
+        campaign = data.get("campaign", {}) or {}
+        category = campaign.get("category", "unknown")
+
+        for item in data.get("attempts", []):
+            attempt = item.get("attempt", {}) or {}
+            verdict = item.get("verdict")
+            total_attempts += 1
+            per_category[category]["attempts"] += 1
+
+            if verdict:
+                v = verdict.get("verdict")
+                if v in {"success", "partial", "fail", "judge_failed"}:
+                    per_category[category][v] += 1
+
+            ts = attempt.get("timestamp")
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    if first_run_at is None or dt < first_run_at:
+                        first_run_at = dt
+                    if last_run_at is None or dt > last_run_at:
+                        last_run_at = dt
+                except (ValueError, TypeError):
+                    pass
+
+    per_category_list = [
+        {
+            "category": cat,
+            **counts,
+            "partial_rate": counts["partial"] / counts["attempts"] if counts["attempts"] else 0.0,
+            "success_rate": counts["success"] / counts["attempts"] if counts["attempts"] else 0.0,
+        }
+        for cat, counts in sorted(per_category.items())
+    ]
+
+    return {
+        "total_attempts": total_attempts,
+        "total_campaigns": total_campaigns,
+        "per_category": per_category_list,
+        "first_run_at": first_run_at.isoformat() if first_run_at else None,
+        "last_run_at": last_run_at.isoformat() if last_run_at else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Vuln pipeline — by status + severity
+# ---------------------------------------------------------------------------
+
+
+def vuln_pipeline_snapshot() -> dict[str, Any]:
+    """Counts of vuln reports by status (live vs. pending) and by
+    severity. The pending bucket is the trust-gate's evidence.
+    """
+    live: list[dict] = []
+    pending: list[dict] = []
+    vulns = _vulns_dir()
+
+    for md_path in vulns.glob("VULN-*.md"):
+        live.append(_summarize_vuln_md(md_path))
+    pending_dir = vulns / "_pending"
+    if pending_dir.exists():
+        for md_path in pending_dir.glob("VULN-*.md"):
+            pending.append(_summarize_vuln_md(md_path))
+
+    return {
+        "live_count": len(live),
+        "pending_count": len(pending),
+        "live": live,
+        "pending": pending,
+    }
+
+
+def _summarize_vuln_md(path: Path) -> dict[str, Any]:
+    """Extract the frontmatter fields from a vuln markdown file."""
+    out: dict[str, Any] = {
+        "vuln_id": path.stem,
+        "filename": str(path.relative_to(_repo_root())),
+        "title": "",
+        "severity": "unknown",
+        "category": "unknown",
+        "status": "unknown",
+        "variant_of": None,
+    }
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+
+    for ln in lines[:25]:
+        if ln.startswith("# ") and " — " in ln:
+            out["title"] = ln[2:].split(" — ", 1)[1].strip()
+        elif ln.startswith("**Severity:**"):
+            out["severity"] = ln.split("`", 2)[1] if "`" in ln else "unknown"
+        elif ln.startswith("**Category:**"):
+            out["category"] = ln.split("`", 2)[1] if "`" in ln else "unknown"
+        elif ln.startswith("**Status:**"):
+            out["status"] = ln.split("`", 2)[1] if "`" in ln else "unknown"
+        elif ln.startswith("**Variant of:**"):
+            out["variant_of"] = ln.split("`", 2)[1] if "`" in ln else None
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Recent campaigns — last N with timestamps + verdict counts
+# ---------------------------------------------------------------------------
+
+
+def recent_campaigns_snapshot(limit: int = 12) -> list[dict[str, Any]]:
+    """Most-recent campaign runs, newest first."""
+    runs_dir = _redteam_runs_dir()
+    if not runs_dir.exists():
+        return []
+
+    campaigns: list[tuple[datetime, dict[str, Any]]] = []
+    for campaign_path in runs_dir.glob("**/campaign_*.json"):
+        try:
+            data = json.loads(campaign_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        campaign = data.get("campaign", {}) or {}
+        verdicts = {"success": 0, "partial": 0, "fail": 0, "judge_failed": 0}
+        latest_attempt_ts: datetime | None = None
+        for item in data.get("attempts", []):
+            v = (item.get("verdict") or {}).get("verdict")
+            if v in verdicts:
+                verdicts[v] += 1
+            ts = (item.get("attempt") or {}).get("timestamp")
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    if latest_attempt_ts is None or dt > latest_attempt_ts:
+                        latest_attempt_ts = dt
+                except (ValueError, TypeError):
+                    pass
+
+        if latest_attempt_ts is None:
+            continue
+
+        campaigns.append((latest_attempt_ts, {
+            "campaign_id": campaign.get("campaign_id", "?"),
+            "category": campaign.get("category", "unknown"),
+            "hop_budget": campaign.get("hop_budget", 0),
+            "cost_budget_usd": campaign.get("cost_budget_usd", 0.0),
+            "rationale": (campaign.get("rationale") or "")[:240],
+            "ran_at": latest_attempt_ts.isoformat(),
+            "attempts": sum(verdicts.values()),
+            "verdicts": verdicts,
+            "run_dir": campaign_path.parent.name,
+        }))
+
+    campaigns.sort(reverse=True, key=lambda c: c[0])
+    return [c[1] for c in campaigns[:limit]]
+
+
+# ---------------------------------------------------------------------------
+# Time-series — attempts per day, last N days
+# ---------------------------------------------------------------------------
+
+
+def time_series_snapshot(days: int = 14) -> dict[str, Any]:
+    """Daily attempt count + success/partial/fail counts for the
+    last N days. Lets the page render a small sparkline-style
+    trend without per-campaign detail."""
+    runs_dir = _redteam_runs_dir()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+    by_day: dict[str, dict[str, int]] = defaultdict(lambda: {
+        "attempts": 0, "success": 0, "partial": 0, "fail": 0,
+    })
+
+    for campaign_path in runs_dir.glob("**/campaign_*.json"):
+        try:
+            data = json.loads(campaign_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        for item in data.get("attempts", []):
+            attempt = item.get("attempt", {}) or {}
+            verdict = item.get("verdict")
+            ts = attempt.get("timestamp")
+            if not ts:
+                continue
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if dt < cutoff:
+                continue
+            day = dt.strftime("%Y-%m-%d")
+            by_day[day]["attempts"] += 1
+            if verdict:
+                v = verdict.get("verdict")
+                if v in {"success", "partial", "fail"}:
+                    by_day[day][v] += 1
+
+    series = [
+        {"day": day, **counts}
+        for day, counts in sorted(by_day.items())
+    ]
+    return {
+        "days": days,
+        "series": series,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Aggregate snapshot — what /adversarial/data returns
+# ---------------------------------------------------------------------------
+
+
+def aggregate_snapshot() -> dict[str, Any]:
+    """Single call that returns everything the page renders.
+    Wrapped so the route handler is one line and the JSON is
+    versioned together."""
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "coverage": coverage_snapshot(),
+        "vuln_pipeline": vuln_pipeline_snapshot(),
+        "recent_campaigns": recent_campaigns_snapshot(),
+        "time_series": time_series_snapshot(),
+    }

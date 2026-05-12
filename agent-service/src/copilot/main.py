@@ -452,6 +452,34 @@ async def visibility_retrieve(body: RetrievalInspectRequest) -> dict[str, Any]:
     return retrieval_breakdown(_RETRIEVER, body.query, body.top_k)
 
 
+# ───── W3 adversarial-platform visibility ──────────────────────────────
+
+
+@app.get("/adversarial", response_class=HTMLResponse, response_model=None)
+async def adversarial_index() -> FileResponse | HTMLResponse:
+    """Static page that visualizes the W3 adversarial platform's
+    state: coverage per attack category, vuln pipeline (live vs.
+    pending), recent campaigns with the Orchestrator's rationale,
+    and a daily attempt-trend chart.
+
+    Authentication-free, same as /visibility — surfaces system
+    *shape* not patient data."""
+    page = _STATIC_DIR / "adversarial.html"
+    if not page.exists():
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "adversarial page missing")
+    return FileResponse(page, media_type="text/html")
+
+
+@app.get("/adversarial/data")
+async def adversarial_data() -> dict[str, Any]:
+    """JSON aggregate consumed by /adversarial. Also useful for
+    piping into a CLI or external dashboard. Read-only file scan
+    against agent-service/evals/redteam_runs/ + vulns/ + the
+    adversarial_findings sidecar dir."""
+    from copilot.adversarial_visibility import aggregate_snapshot
+    return aggregate_snapshot()
+
+
 @app.post("/demo/chat", response_model=ChatResponse)
 async def demo_chat(body: DemoChatRequest, request: Request) -> ChatResponse:
     """Demo endpoint that mints a PatientContext server-side instead of
