@@ -43,6 +43,7 @@ from anthropic import AsyncAnthropic
 
 from redteam.categories import CATEGORY_MODULES
 from redteam.coverage import build_coverage_report
+from redteam.documentation import DocumentationAgent
 from redteam.judge import JudgeAgent
 from redteam.messages import (
     AttackAttempt,
@@ -81,6 +82,7 @@ async def run_one_campaign(
     out_dir: Path,
     anthropic_client: AsyncAnthropic,
     target: Target,
+    auto_document: bool = True,
 ) -> dict:
     """Run a single campaign and write results. Returns a summary.
 
@@ -88,6 +90,13 @@ async def run_one_campaign(
     mode, MVP-style hardcoded) or by the Orchestrator Agent
     (``--orchestrate`` mode). Either way this function does not care
     where it came from — it just executes it.
+
+    If ``auto_document`` (default True), Documentation Agent fires
+    on every success/partial verdict immediately, producing a vuln
+    report at ``vulns/VULN-XXXX.md`` and an eval-case sidecar at
+    ``agent-service/evals/w2/adversarial_findings/VULN-XXXX.json``.
+    Critical-severity findings route to ``_pending/`` subdirs for
+    human approval (ARCHITECTURE.md §"Human approval gates").
     """
     category = campaign.category
     hops = campaign.hop_budget
@@ -98,6 +107,7 @@ async def run_one_campaign(
 
     red_team = RedTeamAgent(client=anthropic_client)
     judge = JudgeAgent(client=anthropic_client)
+    doc_agent = DocumentationAgent(client=anthropic_client) if auto_document else None
 
     print(f"\n=== Campaign {campaign.campaign_id} — {category.value} ===")
     print(f"  hops={hops}  budget=${cost_budget_usd:.2f}")
@@ -158,6 +168,24 @@ async def run_one_campaign(
 
         attempts.append(attempt)
         verdicts.append(verdict)
+
+        # Documentation Agent: auto-fire on success/partial verdicts.
+        # See ARCHITECTURE.md §"Documentation Agent" — converts confirmed
+        # exploits into a vuln report + W2 eval-case sidecar.
+        if doc_agent is not None and verdict.verdict in {"success", "partial"}:
+            try:
+                doc_result = await doc_agent.produce_report(attempt, verdict)
+                if doc_result.is_duplicate_of:
+                    print(f"  doc:       {doc_result.report.vuln_id} (variant of "
+                          f"{doc_result.is_duplicate_of} — eval-case append skipped)")
+                else:
+                    pending_tag = " [PENDING HUMAN APPROVAL]" if doc_result.pending_human_approval else ""
+                    print(f"  doc:       {doc_result.report.vuln_id} "
+                          f"({doc_result.report.severity}){pending_tag}")
+                    print(f"  -> {doc_result.markdown_path}")
+                    print(f"  -> {doc_result.eval_case_json_path}")
+            except Exception as e:  # noqa: BLE001 — doc failure must not crash the campaign
+                print(f"  [doc agent error] {type(e).__name__}: {e}")
 
         if verdict.verdict == "fail":
             consecutive_fails += 1
