@@ -33,8 +33,9 @@ in direct response, plus the two surprise-challenge additions:
 | [THREAT_MODEL.md](THREAT_MODEL.md) | **Week 3** attack surface map for the adversarial platform — 6 categories, highest-risk findings, coverage prioritization |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Week 3** multi-agent adversarial-platform architecture — Orchestrator / Red Team / Judge / Documentation agents, inter-agent comms, regression harness, observability |
 | [PATIENT_DASHBOARD_MIGRATION.md](PATIENT_DASHBOARD_MIGRATION.md) | **Week 2 surprise port** — defense of Next.js 15 + Auth.js v5 framework choice for the FHIR-backed patient dashboard |
-| [COSTS.md](COSTS.md) | W1 cost & scale projections (100 → 100K users) |
+| [W1_COSTS.md](W1_COSTS.md) | W1 cost & scale projections (100 → 100K users) |
 | [W2_COSTS.md](W2_COSTS.md) | **Week 2** cost & latency report — vision / RAG / multi-format / cookbook tier / dashboard, p50/p95, bottleneck analysis |
+| [COSTS.md](COSTS.md) | **Week 3** adversarial-platform cost analysis — per-attempt decomposition, dev spend, projections at 100/1K/10K/100K runs/day, architectural changes per scale |
 | [DEMO_SCRIPT.md](DEMO_SCRIPT.md) / [W2_DEMO_SCRIPT.md](W2_DEMO_SCRIPT.md) | W1 / W2 demo video scripts |
 | [INTERVIEW_PREP.md](INTERVIEW_PREP.md) | AI-interview talking points keyed to repo artifacts |
 | [PRESEARCH.md](PRESEARCH.md) | Architectural-discovery checklist (16 questions) filled in for this build — fastest way to get a complete picture in one read |
