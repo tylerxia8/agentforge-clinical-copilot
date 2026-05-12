@@ -82,7 +82,15 @@ def vulns_dir(severity: str = "low") -> Path:
     """vulns/ directory. Critical-severity findings land under
     vulns/_pending/ until a human approves them."""
     base = _repo_root() / "vulns"
-    if severity == "critical":
+    # Any severity >= high routes to _pending pending human approval.
+    # Initial design routed only critical; the 20260512T030840Z run
+    # surfaced that 'high' findings can also be false positives (the
+    # Judge LLM tends to under-call severity rather than over-call —
+    # 'critical' is reserved for clear-evidence leaks while 'high' is
+    # used liberally). Better to over-gate and require human
+    # acknowledgment than to risk a false-positive permanent
+    # regression case.
+    if severity in {"high", "critical"}:
         return base / "_pending"
     return base
 
@@ -91,7 +99,15 @@ def adversarial_findings_dir(severity: str = "low") -> Path:
     """W2 eval-suite sidecar dir. Critical-severity findings land
     under _pending/ until human approval."""
     base = _repo_root() / "agent-service" / "evals" / "w2" / "adversarial_findings"
-    if severity == "critical":
+    # Any severity >= high routes to _pending pending human approval.
+    # Initial design routed only critical; the 20260512T030840Z run
+    # surfaced that 'high' findings can also be false positives (the
+    # Judge LLM tends to under-call severity rather than over-call —
+    # 'critical' is reserved for clear-evidence leaks while 'high' is
+    # used liberally). Better to over-gate and require human
+    # acknowledgment than to risk a false-positive permanent
+    # regression case.
+    if severity in {"high", "critical"}:
         return base / "_pending"
     return base
 

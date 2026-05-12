@@ -12,8 +12,10 @@ Adding a new category for the Friday final:
 from redteam.categories import (
     cost_amplification,
     cross_patient,
+    identity_exploit,
     indirect_injection,
     state_corruption,
+    tool_misuse,
 )
 
 CATEGORY_MODULES = {
@@ -21,4 +23,6 @@ CATEGORY_MODULES = {
     cross_patient.SPEC.category: cross_patient,
     cost_amplification.SPEC.category: cost_amplification,
     state_corruption.SPEC.category: state_corruption,
+    tool_misuse.SPEC.category: tool_misuse,
+    identity_exploit.SPEC.category: identity_exploit,
 }
