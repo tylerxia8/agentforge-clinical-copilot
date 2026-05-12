@@ -16,6 +16,40 @@
 
 ---
 
+## W3 architecture requirement — compliance map
+
+The PRD's architecture requirement: *"A single-agent or pipeline
+architecture does not satisfy this assignment. Each role below
+represents a distinct agent with its own responsibilities,
+context, and decision-making authority. Your ARCHITECTURE.md
+must define each agent, its inputs and outputs, its trust level,
+and how it coordinates with the others."*
+
+**Four distinct agents, each fully specified below:**
+
+| Agent | Responsibilities | Inputs | Outputs | Trust level | Coordination |
+|---|---|---|---|---|---|
+| **Orchestrator** ([§"Orchestrator Agent"](#orchestrator-agent)) | Strategic prioritization — picks the next campaign based on coverage state | Coverage state, open findings, cost-to-date, verdict trend | `AttackCampaign` | **Highest** — strategic decisions + budget allocation | Emits typed Pydantic message to Red Team |
+| **Red Team** ([§"Red Team Agent"](#red-team-agent)) | Generates concrete attacks (generate + mutate modes) | `AttackCampaign`, optional parent `AttackAttempt` for mutate | `AttackAttempt` | **Low** — explicitly *untrusted*; output can only reach platform via the Judge | HTTP to deployed target; emits Pydantic message to Judge |
+| **Judge** ([§"Judge Agent"](#judge-agent)) | Verdict each attempt (success / partial / fail) | `AttackAttempt`, category-specific rubric, deterministic signal results | `JudgeVerdict` | **Medium-high** — cascades downstream; verdicts drive regression cases | LangGraph state routes on `verdict` value (fail → Orchestrator; success/partial → Documentation) |
+| **Documentation** ([§"Documentation Agent"](#documentation-agent)) | Convert confirmed exploits to vuln reports + W2 eval-case sidecars | `JudgeVerdict` (verdict ≥ partial), `AttackAttempt` transcript | `VulnerabilityReport` + JSON sidecar at `evals/w2/adversarial_findings/` | **Medium** for low/medium severity; **human-gated** for high/critical | Writes to `vulns/` or `vulns/_pending/` based on severity; W2 eval gate picks up live findings on next CI run |
+
+**The agents are structurally distinct, not roles in a pipeline:**
+
+- **Different model families per role** — Orchestrator + Red Team on Sonnet 4.6; Judge + Documentation on Haiku 4.5. Same model for Judge AND Red Team would compromise the conflict-of-interest firewall.
+- **Independent contexts** — the four Pydantic message types in [`agent-service/src/redteam/messages.py`](agent-service/src/redteam/messages.py) are the *only* artifacts that cross agent boundaries. No agent reads another agent's internal state.
+- **Different decision authority** — Orchestrator picks campaigns; Red Team generates but doesn't decide what to launch; Judge verdicts but doesn't decide what to document; Documentation files but doesn't decide what's a vulnerability.
+
+**Conflict-of-interest firewall enforced at the message-shape
+level:** the `AttackAttempt` Pydantic model literally does not
+expose the Red Team's reasoning chain to the Judge. The type
+system prevents the most obvious bypass.
+
+The full ASCII diagram of the coordination flow is in
+[§"System overview — diagram"](#system-overview--diagram) below.
+
+---
+
 ## Summary
 
 The platform is a **four-agent system** built on LangGraph (the same
