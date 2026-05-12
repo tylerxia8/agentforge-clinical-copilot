@@ -13,10 +13,12 @@ from redteam.categories import (
     cost_amplification,
     cross_patient,
     indirect_injection,
+    state_corruption,
 )
 
 CATEGORY_MODULES = {
     indirect_injection.SPEC.category: indirect_injection,
     cross_patient.SPEC.category: cross_patient,
     cost_amplification.SPEC.category: cost_amplification,
+    state_corruption.SPEC.category: state_corruption,
 }

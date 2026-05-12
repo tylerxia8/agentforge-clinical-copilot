@@ -141,11 +141,14 @@ async def run_one_campaign(
 
         print(f"  technique: {generated.technique}")
         print(f"  attack:    {generated.attack_message[:120]}{'...' if len(generated.attack_message) > 120 else ''}")
+        if generated.prior_history:
+            print(f"  history:   {len(generated.prior_history)} synthesized turns")
 
-        # Target: deliver attack
+        # Target: deliver attack (with synthesized history if multi-turn)
         tr = await target.demo_chat(
             message=generated.attack_message,
             patient_uuid=spec.target_patient_uuid,
+            history=generated.prior_history or None,
         )
         attempt.target_responses = [
             ChatMessage(role="assistant", content=tr.text)
