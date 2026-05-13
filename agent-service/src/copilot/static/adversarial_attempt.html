@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AgentForge — Attempt detail</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --warning: #d97706;
+      --success: #15803d;
+      --danger: #dc2626;
+      --critical: #991b1b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      font-size: 14px; line-height: 1.5;
+    }
+    header.app {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+    }
+    header.app h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    header.app .sub {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    header.app .sub a { color: var(--accent); text-decoration: none; }
+    header.app .sub a:hover { text-decoration: underline; }
+    main { max-width: 1080px; margin: 0 auto; padding: 24px; }
+    h2 { margin: 0 0 12px 0; font-size: 14px; font-weight: 600; }
+    h3 {
+      margin: 16px 0 6px 0; font-size: 12px; font-weight: 600;
+      color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card-sub { color: var(--muted); font-size: 12px; margin-top: -8px; margin-bottom: 12px; }
+    .pill {
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 11px; font-weight: 500;
+    }
+    .pill-success { background: #fee2e2; color: var(--danger); }
+    .pill-partial { background: #fef3c7; color: var(--warning); }
+    .pill-fail { background: #dcfce7; color: var(--success); }
+    .pill-judge_failed { background: #f1f5f9; color: var(--muted); }
+    .pill-low { background: #f1f5f9; color: var(--muted); }
+    .pill-medium { background: #fef3c7; color: var(--warning); }
+    .pill-high { background: #fee2e2; color: var(--danger); }
+    .pill-critical { background: #fecaca; color: var(--critical); }
+    .pill-cat {
+      background: #e0e7ff; color: #3730a3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .pill-mode {
+      background: #f1f5f9; color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 4px 16px;
+      font-size: 13px;
+    }
+    .meta-grid dt {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .meta-grid dd { margin: 0; }
+    .meta-grid code, .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    pre.transcript {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 14px 16px;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12.5px;
+      line-height: 1.55;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 6px 0 0 0;
+    }
+    pre.transcript.attack { border-left: 3px solid var(--danger); }
+    pre.transcript.target { border-left: 3px solid var(--accent); }
+    pre.transcript.judge { border-left: 3px solid var(--warning); }
+    .role {
+      display: inline-block;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      background: #1e293b;
+      color: #cbd5e1;
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-right: 6px;
+    }
+    .turn { margin-bottom: 12px; }
+    .turn-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .signals {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.4;
+      overflow-x: auto;
+    }
+    .signals .key { color: var(--muted); }
+    .signals .val-true { color: var(--success); font-weight: 600; }
+    .signals .val-false { color: var(--muted); }
+    .empty {
+      color: var(--muted);
+      font-style: italic;
+      padding: 12px;
+    }
+    .err {
+      background: #fee2e2;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+      border-radius: 4px;
+      padding: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<header class="app">
+  <h1>AgentForge — Attempt detail</h1>
+  <div class="sub">
+    Per-attempt drill-down. The same JSON file committed to the repo at
+    <code id="source-file">…</code>, rendered for direct inspection.
+    Back to <a href="/adversarial">/adversarial</a>.
+  </div>
+</header>
+
+<main id="root">
+  <div class="card"><div class="empty">loading…</div></div>
+</main>
+
+<script>
+'use strict';
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+
+function pill(text, kind) {
+  return `<span class="pill pill-${kind}">${esc(text)}</span>`;
+}
+
+function fmtTs(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+  } catch { return iso; }
+}
+
+function renderSignals(signals) {
+  if (!signals || Object.keys(signals).length === 0) {
+    return '<div class="empty">(no deterministic signals recorded)</div>';
+  }
+  const lines = [];
+  for (const [k, v] of Object.entries(signals)) {
+    let valHtml;
+    if (v === true) valHtml = `<span class="val-true">true</span>`;
+    else if (v === false) valHtml = `<span class="val-false">false</span>`;
+    else if (Array.isArray(v)) valHtml = esc(JSON.stringify(v));
+    else valHtml = esc(JSON.stringify(v));
+    lines.push(`<span class="key">${esc(k)}:</span> ${valHtml}`);
+  }
+  return `<div class="signals">${lines.join('<br>')}</div>`;
+}
+
+function renderTurn(role, content, kind) {
+  return `
+    <div class="turn">
+      <div class="turn-label"><span class="role">${esc(role)}</span></div>
+      <pre class="transcript ${kind}">${esc(content)}</pre>
+    </div>`;
+}
+
+function render(data) {
+  const a = data.attempt || {};
+  const v = data.verdict || {};
+  const c = data.campaign || {};
+
+  document.getElementById('source-file').textContent = data.source_file || '—';
+
+  const verdictKind = ['success', 'partial', 'fail', 'judge_failed'].includes(v.verdict) ? v.verdict : 'judge_failed';
+  const sevKind = ['low', 'medium', 'high', 'critical'].includes(v.severity_hint) ? v.severity_hint : 'low';
+
+  const html = `
+    <!-- ── Header / Meta ── -->
+    <div class="card">
+      <h2>
+        ${pill(a.category || 'unknown', 'cat')}
+        ${pill(v.verdict || '—', verdictKind)}
+        ${v.severity_hint ? pill(v.severity_hint, sevKind) : ''}
+        ${a.mode ? pill(a.mode, 'mode') : ''}
+      </h2>
+      <dl class="meta-grid">
+        <dt>Attempt ID</dt><dd><code>${esc(a.attempt_id || '—')}</code></dd>
+        <dt>Campaign ID</dt><dd><code>${esc(a.campaign_id || '—')}</code></dd>
+        <dt>Timestamp</dt><dd>${fmtTs(a.timestamp)}</dd>
+        <dt>Target patient</dt><dd><code>${esc(a.target_patient_uuid || '—')}</code></dd>
+        <dt>Target HTTP</dt><dd>${(a.target_status_codes || []).join(', ') || '—'}</dd>
+        <dt>Target refused</dt><dd>${a.target_refused === null || a.target_refused === undefined ? '—' : (a.target_refused ? 'true' : 'false')}</dd>
+        <dt>Source file</dt><dd><code>${esc(data.source_file || '—')}</code></dd>
+        <dt>Run dir</dt><dd><code>${esc(data.run_dir || '—')}</code></dd>
+        ${a.parent_attempt_id ? `<dt>Parent attempt</dt><dd><a href="/adversarial/attempts/${esc(a.parent_attempt_id)}"><code>${esc(a.parent_attempt_id)}</code></a> (mutate mode)</dd>` : ''}
+      </dl>
+    </div>
+
+    <!-- ── Attack ── -->
+    <div class="card">
+      <h2>Attack (Red Team Agent output)</h2>
+      <div class="card-sub">
+        ${(a.messages && a.messages.length > 1)
+            ? `Multi-turn attack — ${a.messages.length} turns. The synthesized prior history is shown first, with the final user turn last.`
+            : 'Single-turn attack. The Red Team Agent emitted this user-side prompt; the runner POSTed it to <code>/demo/chat</code>.'
+        }
+      </div>
+      ${(a.messages || []).map(m => renderTurn(m.role, m.content, 'attack')).join('')}
+      ${(a.uploaded_documents && a.uploaded_documents.length) ? `
+        <h3>Uploaded documents (indirect injection)</h3>
+        ${a.uploaded_documents.map(d => `
+          <div class="turn">
+            <div class="turn-label"><span class="role">${esc(d.doc_type)}</span> ${esc(d.filename || '')} — ${esc(d.description || '')}</div>
+            <pre class="transcript attack">${esc(d.payload_text)}</pre>
+          </div>
+        `).join('')}
+      ` : ''}
+      ${a.error ? `
+        <h3>Transport error</h3>
+        <div class="err">${esc(a.error)}</div>
+      ` : ''}
+    </div>
+
+    <!-- ── Target response ── -->
+    <div class="card">
+      <h2>Target response (live W2 Clinical Co-Pilot)</h2>
+      <div class="card-sub">
+        Verbatim response from <code>POST /demo/chat</code> against the
+        deployed agent. <code>target_refused</code>,
+        <code>target_sources</code>, and the raw response text are all
+        directly from the live target — no transformation.
+      </div>
+      ${(a.target_responses && a.target_responses.length)
+        ? a.target_responses.map(m => renderTurn(m.role, m.content, 'target')).join('')
+        : '<div class="empty">(target produced no response — see transport error above if any)</div>'
+      }
+      ${(a.target_sources && a.target_sources.length) ? `
+        <h3>Sources cited by the target</h3>
+        <pre class="transcript target">${esc(JSON.stringify(a.target_sources, null, 2))}</pre>
+      ` : ''}
+    </div>
+
+    <!-- ── Judge verdict ── -->
+    <div class="card">
+      <h2>Judge verdict
+        ${pill(v.verdict || '—', verdictKind)}
+        ${typeof v.judge_confidence === 'number' ? `<span style="color:var(--muted); font-size:12px; font-weight:normal; margin-left:6px;">confidence ${(v.judge_confidence * 100).toFixed(0)}%</span>` : ''}
+      </h2>
+      <div class="card-sub">
+        ${(v.deterministic_signals && Object.keys(v.deterministic_signals).length > 0 && v.judge_confidence === 1)
+          ? 'Deterministic-conclusive verdict — the signal layer decided; no LLM Judge call made.'
+          : 'LLM Judge (Haiku 4.5) verdict — deterministic layer was inconclusive; LLM rubric decided.'}
+      </div>
+      ${v.reasoning ? `
+        <h3>Reasoning</h3>
+        <pre class="transcript judge">${esc(v.reasoning)}</pre>
+      ` : '<div class="empty">(no reasoning recorded)</div>'}
+      <h3>Deterministic signals</h3>
+      ${renderSignals(v.deterministic_signals)}
+      ${v.judged_at ? `
+        <h3>Judged at</h3>
+        <div class="mono">${fmtTs(v.judged_at)}</div>
+      ` : ''}
+    </div>
+
+    <!-- ── Campaign context ── -->
+    <div class="card">
+      <h2>Campaign context</h2>
+      <div class="card-sub">
+        The Orchestrator-chosen (or CLI-launched) campaign this attempt
+        belongs to. <code>rationale</code> shows the Orchestrator's
+        verbatim strategic reasoning when LLM-planned.
+      </div>
+      <dl class="meta-grid">
+        <dt>Campaign ID</dt><dd><code>${esc(c.campaign_id || '—')}</code></dd>
+        <dt>Category</dt><dd>${pill(c.category || '—', 'cat')}</dd>
+        <dt>Hop budget</dt><dd>${esc(c.hop_budget || '—')}</dd>
+        <dt>Cost budget</dt><dd>${typeof c.cost_budget_usd === 'number' ? '$' + c.cost_budget_usd.toFixed(2) : '—'}</dd>
+        <dt>Rationale</dt><dd>${esc(c.rationale || '—')}</dd>
+        <dt>Created at</dt><dd>${fmtTs(c.created_at)}</dd>
+      </dl>
+    </div>
+  `;
+
+  document.getElementById('root').innerHTML = html;
+}
+
+async function load() {
+  // The URL path is /adversarial/attempts/<uuid>; pull the UUID off it.
+  const parts = window.location.pathname.split('/').filter(Boolean);
+  const idx = parts.indexOf('attempts');
+  const attemptId = idx >= 0 && idx + 1 < parts.length ? parts[idx + 1] : '';
+  if (!attemptId) {
+    document.getElementById('root').innerHTML = '<div class="card"><div class="err">No attempt ID in URL.</div></div>';
+    return;
+  }
+  try {
+    const r = await fetch(`/adversarial/attempts/${encodeURIComponent(attemptId)}/data`);
+    if (r.status === 404) {
+      document.getElementById('root').innerHTML = `<div class="card"><div class="err">No attempt with ID <code>${esc(attemptId)}</code> found in any campaign run on disk.</div></div>`;
+      return;
+    }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    render(data);
+  } catch (e) {
+    document.getElementById('root').innerHTML = `<div class="card"><div class="err">Failed to load: ${esc(e.message)}</div></div>`;
+  }
+}
+
+load();
+</script>
+
+</body>
+</html>

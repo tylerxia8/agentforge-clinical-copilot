@@ -391,6 +391,22 @@ function renderPipeline(data) {
     : '<tr><td colspan="5" class="empty">no pending findings</td></tr>';
 }
 
+function attemptLinks(links) {
+  if (!links || !links.length) return '';
+  return '<div style="margin-top:6px; font-size:11px; line-height:1.7;">'
+    + links.map(l => {
+        const verdict = l.verdict || '—';
+        const cls = ['success','partial','fail','judge_failed'].includes(verdict) ? verdict : 'fail';
+        return `<a href="/adversarial/attempts/${esc(l.attempt_id)}"
+                   style="color: var(--accent); text-decoration: none; margin-right: 6px;"
+                   title="${esc(verdict)} @ confidence ${l.judge_confidence != null ? l.judge_confidence.toFixed(2) : '—'}">`
+            + `<span class="pill pill-${cls}" style="font-size:10px;">${esc(verdict)}</span>`
+            + `<code style="font-size:10px; color: var(--muted); margin-left:3px;">${esc((l.attempt_id||'').slice(0,8))}</code>`
+            + `</a>`;
+      }).join('')
+    + '</div>';
+}
+
 function renderCampaigns(data) {
   const tbody = document.querySelector('#campaigns-table tbody');
   if (!data.recent_campaigns.length) {
@@ -402,7 +418,7 @@ function renderCampaigns(data) {
       <td class="mono">${fmtTs(c.ran_at)}</td>
       <td>${pill(c.category, 'cat')}</td>
       <td><strong>${c.attempts}</strong></td>
-      <td>${verdictCounts(c.verdicts)}${verdictBar(c.verdicts, c.attempts)}</td>
+      <td>${verdictCounts(c.verdicts)}${verdictBar(c.verdicts, c.attempts)}${attemptLinks(c.attempt_links)}</td>
       <td><div class="rationale">${esc(c.rationale) || '<em>(no rationale recorded)</em>'}</div></td>
     </tr>
   `).join('');

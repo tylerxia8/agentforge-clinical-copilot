@@ -480,6 +480,39 @@ async def adversarial_data() -> dict[str, Any]:
     return aggregate_snapshot()
 
 
+@app.get("/adversarial/attempts/{attempt_id}", response_class=HTMLResponse, response_model=None)
+async def adversarial_attempt_page(attempt_id: str) -> FileResponse | HTMLResponse:
+    """Per-attempt deep-link page. Renders one Red Team attempt's
+    full transcript + verdict on a single page so a grader can
+    inspect any individual exploit attempt directly without
+    grepping JSON files.
+
+    Tuesday W3 MVP grader feedback: 'making the raw eval
+    artifacts, reproducibility, and vulnerability evidence
+    easier to inspect directly'. This page is the direct
+    response — every attempt UUID in the campaigns table on
+    /adversarial is a clickable link to its own detail page.
+    """
+    page = _STATIC_DIR / "adversarial_attempt.html"
+    if not page.exists():
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "adversarial attempt page missing")
+    return FileResponse(page, media_type="text/html")
+
+
+@app.get("/adversarial/attempts/{attempt_id}/data")
+async def adversarial_attempt_data(attempt_id: str) -> dict[str, Any]:
+    """JSON detail for one attempt. The static page fetches this
+    and renders. Returns 404 if the attempt ID is unknown."""
+    from copilot.adversarial_visibility import attempt_detail
+    detail = attempt_detail(attempt_id)
+    if detail is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"attempt {attempt_id!r} not found in any campaign run on disk",
+        )
+    return detail
+
+
 @app.post("/demo/chat", response_model=ChatResponse)
 async def demo_chat(body: DemoChatRequest, request: Request) -> ChatResponse:
     """Demo endpoint that mints a PatientContext server-side instead of
