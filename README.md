@@ -40,6 +40,7 @@ in direct response, plus the two surprise-challenge additions:
 | [INTERVIEW_PREP.md](INTERVIEW_PREP.md) | AI-interview talking points keyed to repo artifacts |
 | [W2_PRESEARCH.md](W2_PRESEARCH.md) | W2 architectural-discovery checklist (16 questions) — design rationale for the Clinical Co-Pilot |
 | [PRESEARCH.md](PRESEARCH.md) | **Week 3** architectural-discovery checklist (11 sections × 3 phases) — design rationale for the adversarial platform that attacks the W2 target |
+| [EVIDENCE.md](EVIDENCE.md) | **Week 3** — one finding traced end-to-end (Orchestrator decision → Red Team attack → target response → Judge verdict → Documentation Agent → trust gate → W2 eval gate). Each step links to the deployed URL where the artifact can be inspected directly. |
 
 **W3 hard gate — deployed target URL** (the live system the adversarial
 platform attacks; required with every checkpoint per the W3 PRD):
