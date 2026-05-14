@@ -371,10 +371,10 @@ function renderCoverage(data) {
 function vulnRow(v) {
   return `
     <tr>
-      <td class="mono">${esc(v.vuln_id)}</td>
+      <td class="mono"><a href="/adversarial/vulns/${esc(v.vuln_id)}" style="color: var(--accent); text-decoration: none;">${esc(v.vuln_id)}</a></td>
       <td>${severityPill(v.severity)}</td>
       <td>${pill(v.category, 'cat')}</td>
-      <td>${esc(v.title)}${v.variant_of ? `<div class="vuln-note">variant of ${esc(v.variant_of)}</div>` : ''}</td>
+      <td><a href="/adversarial/vulns/${esc(v.vuln_id)}" style="color: var(--text); text-decoration: none;">${esc(v.title)}</a>${v.variant_of ? `<div class="vuln-note">variant of <a href="/adversarial/vulns/${esc(v.variant_of)}" style="color: var(--accent);">${esc(v.variant_of)}</a></div>` : ''}</td>
       <td>${pill(v.status, v.status === 'open' ? 'warning' : v.status === 'fixed' || v.status === 'validated' ? 'success' : 'low')}</td>
     </tr>
   `;

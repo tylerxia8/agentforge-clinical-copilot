@@ -513,6 +513,33 @@ async def adversarial_attempt_data(attempt_id: str) -> dict[str, Any]:
     return detail
 
 
+@app.get("/adversarial/vulns/{vuln_id}", response_class=HTMLResponse, response_model=None)
+async def adversarial_vuln_page(vuln_id: str) -> FileResponse | HTMLResponse:
+    """Per-vuln deep-link page. Renders one vulnerability report's
+    full evidence package on a single URL: the markdown report,
+    the originating attempt's transcript, the regression-case JSON
+    sidecar (if any), and the trust-gate status (live vs. pending).
+    """
+    page = _STATIC_DIR / "adversarial_vuln.html"
+    if not page.exists():
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "adversarial vuln page missing")
+    return FileResponse(page, media_type="text/html")
+
+
+@app.get("/adversarial/vulns/{vuln_id}/data")
+async def adversarial_vuln_data(vuln_id: str) -> dict[str, Any]:
+    """JSON detail for one vuln report. Returns 404 if the vuln
+    ID isn't on disk in vulns/ or vulns/_pending/."""
+    from copilot.adversarial_visibility import vuln_detail
+    detail = vuln_detail(vuln_id)
+    if detail is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"vuln {vuln_id!r} not found in vulns/ or vulns/_pending/",
+        )
+    return detail
+
+
 @app.post("/demo/chat", response_model=ChatResponse)
 async def demo_chat(body: DemoChatRequest, request: Request) -> ChatResponse:
     """Demo endpoint that mints a PatientContext server-side instead of

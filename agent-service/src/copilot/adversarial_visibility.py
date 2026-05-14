@@ -394,6 +394,111 @@ def attempt_detail(attempt_id: str) -> dict[str, Any] | None:
     return None
 
 
+def vuln_detail(vuln_id: str) -> dict[str, Any] | None:
+    """Return the full evidence package for one vuln report, or
+    ``None`` if not found.
+
+    Tuesday W3 MVP grader feedback: "vulnerability evidence easier
+    to inspect directly." This is the per-vuln counterpart to
+    ``attempt_detail`` — one URL returns:
+
+    - The markdown report (raw, for client-side rendering)
+    - Severity / category / status / variant_of (parsed from the
+      markdown frontmatter)
+    - The regression-case JSON sidecar (live or pending) if one
+      exists. Hand-authored architectural-finding vulns don't have
+      sidecars — those return ``eval_case_sidecar: null``.
+    - The originating ``AttackAttempt`` (via the report's
+      ``discovered_by_attempt`` UUID) if it can be resolved on disk
+    - Whether the vuln is live or _pending/ (the trust-gate status)
+    """
+    if not vuln_id:
+        return None
+
+    vulns_root = _vulns_dir()
+    if not vulns_root.exists():
+        return None
+
+    # Look in live dir first, then _pending/. Trust gate status is
+    # derived from which dir held the file.
+    md_path = vulns_root / f"{vuln_id}.md"
+    is_pending = False
+    if not md_path.exists():
+        pending_path = vulns_root / "_pending" / f"{vuln_id}.md"
+        if not pending_path.exists():
+            return None
+        md_path = pending_path
+        is_pending = True
+
+    try:
+        markdown = md_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    summary = _summarize_vuln_md(md_path)
+
+    # Parse the discovered_by_attempt UUID from the frontmatter for
+    # the deep-link to the originating attempt.
+    discovered_attempt_id: str | None = None
+    discovered_campaign_id: str | None = None
+    for ln in markdown.splitlines()[:30]:
+        if ln.startswith("**Discovery attempt:**"):
+            # Format: "**Discovery attempt:** `<uuid>`"
+            parts = ln.split("`", 2)
+            if len(parts) >= 2:
+                discovered_attempt_id = parts[1]
+        elif ln.startswith("**Discovery campaign:**"):
+            parts = ln.split("`", 2)
+            if len(parts) >= 2:
+                discovered_campaign_id = parts[1]
+
+    # Look for the matching JSON sidecar in adversarial_findings/.
+    # Hand-authored architectural vulns (VULN-0001/0002/0003) don't
+    # have sidecars; auto-doc'd vulns do.
+    sidecar_dir = _adversarial_findings_dir()
+    sidecar_path = sidecar_dir / f"{vuln_id}.json"
+    sidecar_is_pending = False
+    if not sidecar_path.exists():
+        sidecar_pending = sidecar_dir / "_pending" / f"{vuln_id}.json"
+        if sidecar_pending.exists():
+            sidecar_path = sidecar_pending
+            sidecar_is_pending = True
+        else:
+            sidecar_path = None  # type: ignore[assignment]
+
+    sidecar_data: dict[str, Any] | None = None
+    if sidecar_path is not None:
+        try:
+            sidecar_data = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            sidecar_data = None
+
+    # Try to resolve the originating attempt — cheap, reuses
+    # attempt_detail().
+    originating_attempt: dict[str, Any] | None = None
+    if discovered_attempt_id:
+        originating_attempt = attempt_detail(discovered_attempt_id)
+
+    return {
+        "schema_version": 1,
+        "vuln_id": vuln_id,
+        "is_pending": is_pending,
+        "markdown_path": str(md_path.relative_to(_agent_service_root().parent)) if not md_path.is_absolute() or md_path.is_relative_to(_agent_service_root().parent) else str(md_path),
+        "markdown": markdown,
+        "frontmatter": summary,
+        "discovered_by_attempt_id": discovered_attempt_id,
+        "discovered_by_campaign_id": discovered_campaign_id,
+        "originating_attempt": originating_attempt,
+        "eval_case_sidecar": sidecar_data,
+        "eval_case_sidecar_is_pending": sidecar_is_pending if sidecar_data else None,
+        "eval_case_sidecar_path": (
+            str(sidecar_path.relative_to(_agent_service_root().parent))
+            if sidecar_path is not None
+            else None
+        ),
+    }
+
+
 def campaign_attempts_index(campaign_id: str) -> list[dict[str, Any]]:
     """Return a list of attempt summaries for one campaign — used by
     the per-campaign attempts list on the /adversarial page. Cheap;

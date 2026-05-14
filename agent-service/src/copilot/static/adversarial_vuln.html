@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AgentForge — Vulnerability detail</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- Use marked from a CDN for client-side markdown rendering of the
+       vuln report's body. Falls back to a <pre> dump if the script
+       fails to load. -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --warning: #d97706;
+      --success: #15803d;
+      --danger: #dc2626;
+      --critical: #991b1b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      font-size: 14px; line-height: 1.5;
+    }
+    header.app {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+    }
+    header.app h1 { margin: 0; font-size: 16px; font-weight: 600; }
+    header.app .sub {
+      margin-top: 2px; color: var(--muted); font-size: 12px;
+    }
+    header.app .sub a { color: var(--accent); text-decoration: none; }
+    header.app .sub a:hover { text-decoration: underline; }
+    header.app .sub code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+    }
+    main { max-width: 1080px; margin: 0 auto; padding: 24px; }
+    h2 { margin: 0 0 12px 0; font-size: 14px; font-weight: 600; }
+    h3 {
+      margin: 16px 0 6px 0; font-size: 12px; font-weight: 600;
+      color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card-sub {
+      color: var(--muted); font-size: 12px;
+      margin-top: -8px; margin-bottom: 12px;
+    }
+    .pill {
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 11px; font-weight: 500;
+    }
+    .pill-low { background: #f1f5f9; color: var(--muted); }
+    .pill-medium { background: #fef3c7; color: var(--warning); }
+    .pill-high { background: #fee2e2; color: var(--danger); }
+    .pill-critical { background: #fecaca; color: var(--critical); }
+    .pill-open { background: #fef3c7; color: var(--warning); }
+    .pill-fixed { background: #dcfce7; color: var(--success); }
+    .pill-validated { background: #dcfce7; color: var(--success); }
+    .pill-pending { background: #ede9fe; color: #6d28d9; }
+    .pill-live { background: #dcfce7; color: var(--success); }
+    .pill-cat {
+      background: #e0e7ff; color: #3730a3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .meta-grid {
+      display: grid; grid-template-columns: max-content 1fr;
+      gap: 4px 16px; font-size: 13px;
+    }
+    .meta-grid dt {
+      color: var(--muted); font-size: 11px;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .meta-grid dd { margin: 0; }
+    code, .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    /* Markdown body styling */
+    .markdown-body { font-size: 14px; line-height: 1.65; }
+    .markdown-body h1 {
+      margin: 0 0 16px 0; font-size: 18px; font-weight: 600;
+      letter-spacing: -0.01em;
+      border-bottom: 1px solid var(--border); padding-bottom: 8px;
+    }
+    .markdown-body h2 {
+      margin: 24px 0 8px 0; font-size: 15px; font-weight: 600;
+      color: var(--text);
+    }
+    .markdown-body h3 {
+      margin: 16px 0 6px 0; font-size: 13px;
+      color: var(--text); text-transform: none; letter-spacing: 0;
+    }
+    .markdown-body p { margin: 6px 0 12px 0; }
+    .markdown-body ul, .markdown-body ol { margin: 8px 0; padding-left: 24px; }
+    .markdown-body li { margin: 2px 0; }
+    .markdown-body strong { font-weight: 600; }
+    .markdown-body code {
+      background: #f1f5f9; padding: 1px 5px;
+      border-radius: 3px; font-size: 12.5px;
+    }
+    .markdown-body pre {
+      background: #0f172a; color: #e2e8f0;
+      padding: 12px 14px; border-radius: 6px;
+      overflow-x: auto; font-size: 12px;
+      line-height: 1.45;
+    }
+    .markdown-body pre code {
+      background: transparent; padding: 0; color: inherit;
+    }
+    .markdown-body blockquote {
+      border-left: 3px solid var(--border);
+      padding-left: 14px; color: var(--muted); margin: 12px 0;
+    }
+    .markdown-body table { border-collapse: collapse; margin: 12px 0; }
+    .markdown-body th, .markdown-body td {
+      border: 1px solid var(--border);
+      padding: 4px 10px; text-align: left;
+    }
+    .markdown-body a { color: var(--accent); text-decoration: none; }
+    .markdown-body a:hover { text-decoration: underline; }
+    /* JSON sidecar */
+    pre.sidecar {
+      background: #f8fafc; border: 1px solid var(--border);
+      border-radius: 4px; padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11.5px; line-height: 1.4;
+      overflow-x: auto; max-height: 360px;
+      margin: 6px 0 0 0;
+    }
+    .empty {
+      color: var(--muted); font-style: italic; padding: 12px;
+    }
+    .err {
+      background: #fee2e2; color: var(--danger);
+      border: 1px solid var(--danger);
+      border-radius: 4px; padding: 12px;
+    }
+    .pending-banner {
+      background: #ede9fe; color: #6d28d9;
+      border: 1px solid #c4b5fd;
+      border-radius: 6px; padding: 10px 14px;
+      margin-bottom: 16px; font-size: 13px;
+    }
+    .pending-banner strong { font-weight: 600; }
+  </style>
+</head>
+<body>
+
+<header class="app">
+  <h1>AgentForge — Vulnerability detail</h1>
+  <div class="sub">
+    Single-URL evidence package for one vuln report. The same
+    files committed to the repo, rendered for direct inspection.
+    Back to <a href="/adversarial">/adversarial</a>.
+  </div>
+</header>
+
+<main id="root">
+  <div class="card"><div class="empty">loading…</div></div>
+</main>
+
+<script>
+'use strict';
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+
+function pill(text, kind) {
+  return `<span class="pill pill-${kind}">${esc(text)}</span>`;
+}
+
+function fmtTs(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+  } catch { return iso; }
+}
+
+function renderMarkdown(md) {
+  // Use marked if loaded; fall back to a pre dump.
+  if (typeof marked !== 'undefined' && marked.parse) {
+    try {
+      // Configure marked once: GitHub-style line breaks off, sanitize default.
+      marked.setOptions({ headerIds: false, mangle: false });
+      return `<div class="markdown-body">${marked.parse(md)}</div>`;
+    } catch (e) {
+      // Fall through to pre dump
+    }
+  }
+  return `<pre style="white-space: pre-wrap; font-size: 12px;">${esc(md)}</pre>`;
+}
+
+function attemptSummary(att) {
+  // Compact one-line summary for the embedded originating-attempt
+  // card; links to the full per-attempt page.
+  const v = att.verdict || {};
+  const a = att.attempt || {};
+  const verdictKind = ['success','partial','fail','judge_failed'].includes(v.verdict) ? v.verdict : 'fail';
+  return `
+    <dl class="meta-grid">
+      <dt>Attempt ID</dt><dd><a href="/adversarial/attempts/${esc(a.attempt_id || '')}"><code>${esc(a.attempt_id || '—')}</code></a></dd>
+      <dt>Mode</dt><dd><code>${esc(a.mode || '—')}</code></dd>
+      <dt>Verdict</dt><dd>${pill(v.verdict || '—', verdictKind)} <span style="color: var(--muted); font-size: 12px;">@ confidence ${typeof v.judge_confidence === 'number' ? (v.judge_confidence * 100).toFixed(0) + '%' : '—'}</span></dd>
+      <dt>Target HTTP</dt><dd>${(a.target_status_codes || []).join(', ') || '—'}</dd>
+      <dt>Target refused</dt><dd>${a.target_refused === null || a.target_refused === undefined ? '—' : (a.target_refused ? 'true' : 'false')}</dd>
+      <dt>Source file</dt><dd><code>${esc(att.source_file || '—')}</code></dd>
+    </dl>
+    <p style="margin-top: 12px; font-size: 13px;">
+      <a href="/adversarial/attempts/${esc(a.attempt_id || '')}">
+        See the full attack transcript + verdict reasoning →
+      </a>
+    </p>`;
+}
+
+function pendingBanner(isPending) {
+  if (!isPending) return '';
+  return `
+    <div class="pending-banner">
+      <strong>⚠ Pending human approval.</strong> This report was
+      auto-generated by the Documentation Agent and is held in
+      <code>vulns/_pending/</code> because its severity is high or
+      critical. The W2 eval suite does NOT load
+      <code>_pending/</code> findings as regression cases.
+      A human reviewer moves the file to <code>vulns/</code> to
+      promote it.
+    </div>`;
+}
+
+function render(data) {
+  const fm = data.frontmatter || {};
+
+  const sevKind = ['low','medium','high','critical'].includes(fm.severity) ? fm.severity : 'low';
+  const statusKind = ['open','fixed','validated','triaged'].includes(fm.status) ? fm.status : 'low';
+
+  const sidecarBlock = data.eval_case_sidecar
+    ? `<pre class="sidecar">${esc(JSON.stringify(data.eval_case_sidecar, null, 2))}</pre>`
+    : `<div class="empty">No regression-case sidecar.
+        Hand-authored architectural findings (VULN-0001/0002/0003)
+        don't get a sidecar; only the Documentation Agent's
+        auto-doc'd findings do.</div>`;
+
+  const sidecarTrust = data.eval_case_sidecar_is_pending
+    ? ' (PENDING — not loaded by W2 eval gate)'
+    : (data.eval_case_sidecar ? ' (LIVE — loaded by W2 eval gate via adversarial_loader.py)' : '');
+
+  const html = `
+    ${pendingBanner(data.is_pending)}
+
+    <div class="card">
+      <h2>
+        <code style="background: transparent; padding: 0; font-size: 14px;">${esc(data.vuln_id)}</code>
+        ${pill(fm.severity || '—', sevKind)}
+        ${fm.category ? pill(fm.category, 'cat') : ''}
+        ${pill(fm.status || '—', statusKind)}
+        ${data.is_pending ? pill('pending', 'pending') : pill('live', 'live')}
+      </h2>
+      <dl class="meta-grid">
+        <dt>Title</dt><dd>${esc(fm.title || '—')}</dd>
+        <dt>Variant of</dt><dd>${fm.variant_of ? `<a href="/adversarial/vulns/${esc(fm.variant_of)}"><code>${esc(fm.variant_of)}</code></a>` : '—'}</dd>
+        <dt>Markdown path</dt><dd><code>${esc(data.markdown_path || '—')}</code></dd>
+        ${data.discovered_by_campaign_id ? `<dt>Discovery campaign</dt><dd><code>${esc(data.discovered_by_campaign_id)}</code></dd>` : ''}
+        ${data.discovered_by_attempt_id ? `<dt>Discovery attempt</dt><dd><a href="/adversarial/attempts/${esc(data.discovered_by_attempt_id)}"><code>${esc(data.discovered_by_attempt_id)}</code></a></dd>` : ''}
+      </dl>
+    </div>
+
+    <div class="card">
+      <h2>Report (rendered from <code>${esc(data.markdown_path)}</code>)</h2>
+      <div class="card-sub">
+        Source-of-truth content. The Documentation Agent (or the
+        engineer, for hand-authored findings) writes the
+        markdown; this page renders it.
+      </div>
+      ${renderMarkdown(data.markdown)}
+    </div>
+
+    ${data.originating_attempt ? `
+      <div class="card">
+        <h2>Originating attempt — Red Team + target + Judge</h2>
+        <div class="card-sub">
+          The specific campaign attempt that surfaced this finding.
+          Full transcript on the deep-link page; summary below.
+        </div>
+        ${attemptSummary(data.originating_attempt)}
+      </div>
+    ` : ''}
+
+    <div class="card">
+      <h2>W2 regression-case sidecar${sidecarTrust}</h2>
+      <div class="card-sub">
+        The JSON the W2 eval-suite loader reads at runtime
+        (<code>agent-service/evals/w2/adversarial_loader.py</code>).
+        Each sidecar maps to a W2Case enforced on every PR via
+        <code>.github/workflows/eval-gate.yml</code> — that's how
+        a confirmed W3 finding becomes a permanent regression
+        guard.
+      </div>
+      ${data.eval_case_sidecar_path ? `<div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">path: <code>${esc(data.eval_case_sidecar_path)}</code></div>` : ''}
+      ${sidecarBlock}
+    </div>
+  `;
+
+  document.getElementById('root').innerHTML = html;
+}
+
+async function load() {
+  const parts = window.location.pathname.split('/').filter(Boolean);
+  const idx = parts.indexOf('vulns');
+  const vulnId = idx >= 0 && idx + 1 < parts.length ? parts[idx + 1] : '';
+  if (!vulnId) {
+    document.getElementById('root').innerHTML = '<div class="card"><div class="err">No vuln ID in URL.</div></div>';
+    return;
+  }
+  try {
+    const r = await fetch(`/adversarial/vulns/${encodeURIComponent(vulnId)}/data`);
+    if (r.status === 404) {
+      document.getElementById('root').innerHTML = `<div class="card"><div class="err">No vuln with ID <code>${esc(vulnId)}</code> found in <code>vulns/</code> or <code>vulns/_pending/</code>.</div></div>`;
+      return;
+    }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    render(data);
+  } catch (e) {
+    document.getElementById('root').innerHTML = `<div class="card"><div class="err">Failed to load: ${esc(e.message)}</div></div>`;
+  }
+}
+
+// Wait for marked to load, then render
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', load);
+} else {
+  load();
+}
+</script>
+
+</body>
+</html>
