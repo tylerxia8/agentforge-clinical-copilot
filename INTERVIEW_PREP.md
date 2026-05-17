@@ -1194,3 +1194,175 @@ similarity clustering of generated attacks to surface
 near-duplicates the LLM is producing inadvertently; a feedback
 loop where successful attacks become new seeds for the next
 campaign (closing the learning circuit).
+
+# W3 stack-premise interview answers — reframing wrong assumptions
+
+These four came from an AI-interview pass that opened with a flawed
+premise: that I chose PHP as the backend, that I wrote XSLT
+transformations for HL7/CDA, and that the chat panel uses Twig.
+None of those are true — the 83% PHP is OpenEMR's upstream
+codebase that I forked, my actual co-pilot backend is Python, and
+the chat panel is vanilla JS + `marked.js`. The right move in the
+interview is to reframe the premise BEFORE answering, then ground
+the real answer in code that exists. If I let the premise stand
+and answer it on its own terms, a grader who runs
+`ls agent-service/src/copilot/` catches the contradiction in
+fifteen seconds.
+
+## "Walk me through your decision to use PHP as the primary backend for a clinical copilot."
+
+Reframe first. The 83% PHP figure is OpenEMR's upstream codebase
+that I forked, not my engineering decision. I integrated WITH it
+because OpenEMR is the de facto open-source ambulatory EMR. My
+actual co-pilot backend is **Python (FastAPI + LangGraph)** at
+`agent-service/src/copilot/`. The PHP footprint inside the
+co-pilot itself is one small module —
+`interface/modules/custom_modules/oe-module-clinical-copilot/` —
+roughly 500 lines that render the chat panel in the patient
+chart, mint HMAC patient-context tokens, and proxy POSTs to the
+Python service.
+
+Python over Node/Java was driven by three things. First, the
+Anthropic SDK is first-class in Python with retry semantics and
+tool-use plumbing I'd otherwise rebuild. Second, LangGraph gives
+me multi-agent state machines (Orchestrator → Red Team → Judge →
+Documentation) as a graph primitive — the W3 platform that
+attacks W2 would have been a worse hand-rolled state machine in
+any other language. Third, pytest + hypothesis make the eval gate
+realistic; clinical correctness regressions block PRs because the
+testing primitives are mature in Python.
+
+Async FastAPI handles the HTTP layer with the same concurrency
+profile as Node but without context-switching the team's mental
+model away from the AI/ML code that's 80% of the project's value.
+Java would have been overkill for a 3-week sprint and the SDK
+story is weaker. Node would have meant writing a worse LangGraph
+in TypeScript and a worse pytest+hypothesis story for evals.
+
+## "Describe a specific scenario where your XSLT transformations are critical to the application."
+
+Same reframe. The XSLT in this repo is OpenEMR's upstream
+CCDA/CCR document handling (continuity-of-care exports). My
+co-pilot doesn't touch it. The co-pilot consumes patient data via
+**FHIR R4 JSON** at OpenEMR's `/apis/default/fhir/*` endpoints —
+USCDI-aligned resources (MedicationRequest, Condition,
+AllergyIntolerance, Encounter, Observation), not CDA XML. The
+`OpenEMRBridge` in `agent-service/src/copilot/bridge/openemr.py`
+is a thin async FHIR client over `httpx`, not an XSLT pipeline.
+
+If I had to extend this to ingest external CDA documents — HIE
+feeds, hospital discharge summaries arriving as C-CDA XML — I'd
+add a transformation layer in Python at the bridge boundary:
+`lxml` for parse, `saxonche` for XSLT 3.0, with a strict pattern.
+Every CDA template ID maps to a Pydantic FHIR-shaped model.
+Schema-validation failures produce a structured error envelope
+including the offending fragment. The bridge never silently
+downgrades a partial parse to "trust this."
+
+For the error-recovery question specifically: a malformed
+`<entry>` block fails the resource individually but doesn't
+poison the bundle. The agent's response carries a `gaps` section
+flagging "couldn't ingest 2 medications from import doc — see
+[link]." The provider sees the data hole rather than getting a
+confidently incomplete summary. That's the same pattern the live
+co-pilot uses today for FHIR-side partial fetches.
+
+## "How is your application architected for HIPAA compliance? Walk through how patient data flows and what safeguards exist at each step."
+
+Honest framing first. This is a **graded research prototype with
+HIPAA-aware design, not a HIPAA-compliant production deployment**.
+Railway-hosted, no signed BAA with Anthropic or Railway, synthetic
+patient data only (the test patients are seeded — no real PHI).
+I'll answer the architecture question on the assumption that
+"compliance" means the design generalizes to a real BAA stack,
+not that today's deploy is shippable to a hospital. Conflating
+those two is the single biggest credibility risk in a healthcare
+interview.
+
+Data flow:
+
+1. Provider opens patient chart in OpenEMR. The existing session
+   auth (OpenEMR's session table) gates the chat panel — no
+   patient_uuid leaves the server-rendered shell without an
+   authenticated provider session.
+2. The PHP shim mints an HMAC patient-context token:
+   `{user_id, patient_uuid, encounter_uuid, issued_at, nonce}`
+   signed with `AGENT_SHARED_SECRET`. Single-patient scope,
+   freshness-checked, nonce for replay defense.
+3. Browser POSTs to the Python agent service `/agent/chat` over
+   TLS. FastAPI verifies HMAC before any other code path runs —
+   no token, no work. The dependency that mints `PatientContext`
+   is the first thing every route runs.
+4. Orchestrator reads `ContextCache` (Redis, keyed by
+   patient_uuid). Cache miss → `OpenEMRBridge` fans out
+   OAuth2-authenticated FHIR reads. Every row that comes back is
+   **pinned to the token's patient_uuid** in
+   `seen_tool_results`. Cross-patient queries within a session
+   structurally refuse; the eval suite has a regression case for
+   exactly this (`adversarial.cross_patient_query`).
+5. LLM generates with citation IDs required. The verifier rejects
+   responses with claims that don't match a row in
+   `seen_tool_results`. This is the anti-fabrication layer — the
+   reason `(no tool data was retrieved)` was the actual fallback
+   when the OAuth bridge was broken, instead of the LLM
+   confidently inventing meds.
+6. Response returns. Server-side logging redacts at the bridge
+   boundary — names, MRNs, free-text notes don't hit stdout.
+   Langfuse tracing path scrubs PHI in pre-export hooks.
+
+What's missing for actual HIPAA — and what I'd call out in a
+real interview rather than hide:
+
+- BAA-eligible LLM endpoint (Bedrock Claude or
+  Anthropic-with-BAA, not the dev-tier API used today)
+- Immutable audit-log shipping (CloudWatch + S3 Object Lock)
+- RBAC beyond user_id-in-token (role + minimum-necessary scope
+  per FHIR resource type)
+- Encryption at rest on the Redis bundle cache
+- Breach-notification SLA + signed BAAs with infra providers
+- Full DFD approved by a privacy officer
+
+All called out in `AUDIT.md` and `ARCHITECTURE.md §11 Roadmap`.
+
+## "If you needed to scale to real-time clinical alerts or many concurrent providers, what bottlenecks do you anticipate?"
+
+Reframe one more time. My chat panel is vanilla JS + `marked.js`
+for client-side markdown rendering — not Twig. OpenEMR upstream
+uses Twig for its admin pages, but that's not on the co-pilot hot
+path. So the question of "modify your template rendering
+strategy" partially dissolves: rendering is already client-side
+and dynamic.
+
+Real bottlenecks at scale:
+
+**Per-patient `ContextCache` invalidation.** Today the bundle is
+rebuilt on next read after a write. Fine for one provider per
+chart. With ICU concurrent edits (RN updating meds while MD asks
+the co-pilot), you'd get stale snapshots. Fix: subscribe the
+bridge to Redis Streams on FHIR-write events; broadcast
+invalidation by patient_uuid; panels open on that patient
+receive a `bundle-changed` push.
+
+**Connection holding.** Each `/agent/chat` call holds the HTTP
+connection 5–15s while the LLM streams. Railway 1-replica caps at
+~30 concurrent before queueing. Horizontal scale is trivial — the
+agent service is stateless, context lives in Redis — but the
+real cap is Anthropic's per-key concurrency limits, not app
+state. You'd want a token-pool layer or routing across multiple
+API keys for true scale.
+
+**Real-time clinical alerts.** HTTP request/response is the
+wrong primitive. Switch to SSE from copilot-agent → panel;
+subscription model is `patient_uuid + alert_kinds`; server pushes
+deltas as they happen. The chat panel and the alert stream share
+the same HMAC token auth (longer-lived for SSE).
+
+**Operator-dashboard polling.** The `/adversarial` dashboard
+currently polls `/adversarial/data` every 5s. For production-scale
+ops that switches to SSE for the same reason as clinical alerts.
+
+What I would NOT do at scale: introduce Twig server-side
+rendering for the chat. The chat panel is small, the markdown is
+highly dynamic, and SSR adds a round-trip without solving any
+actual bottleneck — it would be a complexity regression for an
+imagined gain.
