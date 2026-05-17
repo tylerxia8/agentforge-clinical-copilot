@@ -54,6 +54,15 @@ from redteam.messages import (
 )
 from redteam.orchestrator import Orchestrator, OrchestratorContext
 from redteam.red_team import RedTeamAgent, RedTeamAgentRefused
+from redteam.signals import (
+    CoverageMonitor,
+    SignalBus,
+    emit_attempt_recorded,
+    emit_campaign_ended,
+    emit_campaign_started,
+    emit_orchestrator_decided,
+    emit_verdict_delivered,
+)
 from redteam.target import Target
 
 
@@ -83,6 +92,7 @@ async def run_one_campaign(
     anthropic_client: AsyncAnthropic,
     target: Target,
     auto_document: bool = True,
+    signal_bus: SignalBus | None = None,
 ) -> dict:
     """Run a single campaign and write results. Returns a summary.
 
@@ -114,6 +124,16 @@ async def run_one_campaign(
     print(f"  target_patient_uuid={spec.target_patient_uuid}")
     if campaign.rationale:
         print(f"  rationale: {campaign.rationale}")
+
+    if signal_bus is not None:
+        emit_campaign_started(
+            signal_bus,
+            campaign_id=campaign.campaign_id,
+            category=category,
+            hop_budget=hops,
+            cost_budget_usd=cost_budget_usd,
+            rationale=campaign.rationale,
+        )
 
     attempts: list[AttackAttempt] = []
     verdicts: list[JudgeVerdict] = []
@@ -163,11 +183,34 @@ async def run_one_campaign(
               f"refused={tr.refused}  sources={len(tr.sources)}  "
               f"text={len(tr.text)}ch")
 
+        if signal_bus is not None:
+            emit_attempt_recorded(
+                signal_bus,
+                campaign_id=campaign.campaign_id,
+                attempt_id=attempt.attempt_id,
+                category=category,
+                technique=generated.technique,
+                target_status=tr.status_code,
+                target_refused=tr.refused,
+                sources_count=len(tr.sources),
+            )
+
         # Judge: verdict
         verdict = await judge.judge(attempt, rubric)
         print(f"  verdict:   {verdict.verdict}  confidence={verdict.judge_confidence:.2f}  "
               f"severity={verdict.severity_hint}")
         print(f"  reasoning: {verdict.reasoning[:200]}{'...' if len(verdict.reasoning) > 200 else ''}")
+
+        if signal_bus is not None:
+            emit_verdict_delivered(
+                signal_bus,
+                campaign_id=campaign.campaign_id,
+                attempt_id=attempt.attempt_id,
+                category=category,
+                verdict=verdict.verdict,
+                confidence=verdict.judge_confidence,
+                severity=verdict.severity_hint,
+            )
 
         attempts.append(attempt)
         verdicts.append(verdict)
@@ -217,6 +260,16 @@ async def run_one_campaign(
         "red_team_refusals": red_team_refusals,
         "output_file": out_path.name,
     }
+
+    if signal_bus is not None:
+        emit_campaign_ended(
+            signal_bus,
+            campaign_id=campaign.campaign_id,
+            category=category,
+            attempts=summary["attempts"],
+            verdict_counts=summary["verdicts"],
+        )
+
     return summary
 
 
@@ -323,6 +376,14 @@ async def _main(argv: list[str]) -> int:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = _runs_root() / timestamp
 
+    # W4 signal bus + live monitor. Per-run signals.jsonl lives next
+    # to the campaign JSONs so the dashboard can scan the most-recent
+    # run dir for the live stream.
+    out_dir.mkdir(parents=True, exist_ok=True)
+    signal_bus = SignalBus(persist_path=out_dir / "signals.jsonl")
+    live_monitor = CoverageMonitor()
+    signal_bus.subscribe(live_monitor.on_event)
+
     summaries: list[dict] = []
 
     if args.orchestrate > 0:
@@ -338,16 +399,30 @@ async def _main(argv: list[str]) -> int:
         for round_idx in range(1, args.orchestrate + 1):
             print(f"\n##### Orchestrator round {round_idx}/{args.orchestrate} #####")
             coverage = build_coverage_report(_runs_root())
+
+            # Pin the live-monitor baseline BEFORE asking the
+            # Orchestrator. Subsequent verdicts move the live
+            # snapshot; the next round's recent_shifts() compares
+            # against this baseline.
+            shifts_for_this_round = live_monitor.recent_shifts()
+            live_monitor.take_orchestrator_snapshot()
+
             ctx = OrchestratorContext(
                 coverage=coverage,
                 cost_to_date_usd=cost_to_date,
                 cost_ceiling_usd=args.total_budget,
                 available_categories=list(CATEGORY_MODULES.keys()),
+                live_monitor=live_monitor,
             )
             print(f"  coverage: {coverage.total_attempts} attempts across "
                   f"{coverage.total_campaigns} campaigns; "
                   f"open findings: {coverage.open_findings_count}")
             print(f"  budget: ${cost_to_date:.2f} / ${args.total_budget:.2f}")
+            if shifts_for_this_round:
+                print(f"  live shifts since last decision: "
+                      f"{len(shifts_for_this_round)} category(ies) moved")
+                for s in shifts_for_this_round[:3]:
+                    print(f"    - {s.summary}")
 
             campaign = await orchestrator.plan_next_campaign(ctx)
             if campaign is None:
@@ -357,12 +432,22 @@ async def _main(argv: list[str]) -> int:
                   f"(hops={campaign.hop_budget}, "
                   f"budget=${campaign.cost_budget_usd:.2f})")
 
+            emit_orchestrator_decided(
+                signal_bus,
+                campaign_id=campaign.campaign_id,
+                category=campaign.category,
+                rationale=campaign.rationale or "",
+                used_live_signals=bool(shifts_for_this_round),
+                shifts_consulted=[s.to_jsonable() for s in shifts_for_this_round],
+            )
+
             try:
                 s = await run_one_campaign(
                     campaign=campaign,
                     out_dir=out_dir,
                     anthropic_client=anthropic_client,
                     target=target,
+                    signal_bus=signal_bus,
                 )
                 summaries.append(s)
                 cost_to_date += s["attempts"] * APPROX_COST_PER_ATTEMPT
@@ -391,6 +476,7 @@ async def _main(argv: list[str]) -> int:
                     out_dir=out_dir,
                     anthropic_client=anthropic_client,
                     target=target,
+                    signal_bus=signal_bus,
                 )
                 summaries.append(s)
             except Exception as e:  # noqa: BLE001 — keep the runner alive across campaigns

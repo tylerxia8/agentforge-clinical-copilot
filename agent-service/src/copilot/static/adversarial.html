@@ -174,6 +174,7 @@
     <button data-tab="pipeline" aria-selected="false">Vuln pipeline</button>
     <button data-tab="campaigns" aria-selected="false">Recent campaigns</button>
     <button data-tab="trend" aria-selected="false">Attempts trend</button>
+    <button data-tab="signals" aria-selected="false">Live signal stream</button>
   </nav>
 
   <!-- ─── Coverage ──────────────────────────────────────────────── -->
@@ -273,6 +274,60 @@
           <tr><th>Day</th><th>Attempts</th><th>Verdicts</th><th>Bar</th></tr>
         </thead>
         <tbody><tr><td colspan="4" class="empty">loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─── Live signal stream (W4 observability-driven autonomy) ──── -->
+  <section class="tab" data-tab="signals" aria-current="false">
+    <div class="card">
+      <h2>Orchestrator decisions <span class="mono" style="font-size:11px; color: var(--muted); margin-left: 8px;" id="signals-meta">—</span></h2>
+      <div class="card-sub">
+        Each Orchestrator decision is itself a signal — the
+        <code>used_live_signals</code> column is the proof that the
+        decision consulted the in-flight verdict-distribution
+        shifts (the live monitor's <code>recent_shifts()</code>)
+        rather than just a static disk snapshot. The shifts the
+        Orchestrator actually saw are listed in
+        <code>shifts_consulted</code>.
+      </div>
+      <table id="orchestrator-decisions-table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Category</th>
+            <th>Used live signals?</th>
+            <th>Shifts consulted</th>
+            <th>Rationale</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="5" class="empty">no signal stream yet — run <code>python -m redteam.run_campaign --orchestrate N</code> to populate</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Event timeline <span class="mono" style="font-size:11px; color: var(--muted); margin-left: 8px;" id="signals-timeline-meta">tail of most-recent run</span></h2>
+      <div class="card-sub">
+        Live stream of every event the campaign runner publishes
+        to the SignalBus —
+        <code>campaign.started</code> →
+        <code>attempt.recorded</code> →
+        <code>verdict.delivered</code> →
+        <code>orchestrator.decided</code> →
+        <code>campaign.ended</code>. Persisted to
+        <code>signals.jsonl</code> in the run directory; this
+        view tails the most recent. Auto-refreshes every 8s.
+      </div>
+      <table id="signal-timeline-table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Event</th>
+            <th>Category</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="4" class="empty">no events yet</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -451,6 +506,84 @@ function renderTrend(data) {
   }).join('');
 }
 
+function renderSignals(signals) {
+  // Orchestrator-decision table
+  const decisions = signals && signals.orchestrator_decisions || [];
+  const dTable = document.querySelector('#orchestrator-decisions-table tbody');
+  if (!decisions.length) {
+    dTable.innerHTML = '<tr><td colspan="5" class="empty">no Orchestrator decisions in the most-recent run — run <code>python -m redteam.run_campaign --orchestrate N</code> to populate</td></tr>';
+  } else {
+    // Most recent first.
+    const sorted = decisions.slice().reverse();
+    dTable.innerHTML = sorted.map(d => {
+      const shiftLis = (d.shifts_consulted || []).map(s =>
+        `<li>${esc(s.summary || `${s.category}: Δpartial=${(s.partial_rate_delta || 0).toFixed(2)}`)}</li>`
+      ).join('');
+      const shiftsCell = shiftLis
+        ? `<ul style="margin:0; padding-left:18px; font-size:11px;">${shiftLis}</ul>`
+        : '<em style="color: var(--muted); font-size:11px;">none</em>';
+      const liveBadge = d.used_live_signals
+        ? pill('yes', 'success')
+        : pill('no', 'low');
+      return `
+        <tr>
+          <td class="mono">${fmtTs(d.timestamp)}</td>
+          <td>${pill(d.category || '—', 'cat')}</td>
+          <td>${liveBadge}</td>
+          <td>${shiftsCell}</td>
+          <td><div class="rationale">${esc(d.rationale)}</div></td>
+        </tr>
+      `;
+    }).join('');
+  }
+  document.getElementById('signals-meta').textContent =
+    signals && signals.run_dir
+      ? `from run ${signals.run_dir} (${signals.total_events || 0} events)`
+      : 'no run yet';
+
+  // Event timeline tail
+  const events = (signals && signals.recent_events) || [];
+  const eTable = document.querySelector('#signal-timeline-table tbody');
+  if (!events.length) {
+    eTable.innerHTML = '<tr><td colspan="4" class="empty">no events yet</td></tr>';
+    return;
+  }
+  // Most recent first
+  const sortedEvents = events.slice().reverse();
+  eTable.innerHTML = sortedEvents.map(ev => {
+    const p = ev.payload || {};
+    let detail = '';
+    switch (ev.event_type) {
+      case 'campaign.started':
+        detail = `hop_budget=${p.hop_budget} budget=$${(p.cost_budget_usd || 0).toFixed(2)}`;
+        break;
+      case 'attempt.recorded':
+        detail = `technique=${esc(p.technique || '—')} status=${p.target_status} refused=${p.target_refused} sources=${p.sources_count}`;
+        break;
+      case 'verdict.delivered':
+        detail = `<span class="pill pill-${p.verdict || 'fail'}">${esc(p.verdict || '—')}</span> conf=${(p.confidence || 0).toFixed(2)} sev=${esc(p.severity || '—')}`;
+        break;
+      case 'orchestrator.decided':
+        detail = `used_live_signals=${p.used_live_signals} shifts=${(p.shifts_consulted || []).length}`;
+        break;
+      case 'campaign.ended':
+        const vc = p.verdict_counts || {};
+        detail = `attempts=${p.attempts} s=${vc.success||0} p=${vc.partial||0} f=${vc.fail||0}`;
+        break;
+      default:
+        detail = JSON.stringify(p).slice(0, 80);
+    }
+    return `
+      <tr>
+        <td class="mono">${fmtTs(ev.timestamp)}</td>
+        <td class="mono">${esc(ev.event_type)}</td>
+        <td>${ev.category ? pill(ev.category, 'cat') : '—'}</td>
+        <td>${detail}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
 async function load() {
   try {
     const r = await fetch('/adversarial/data');
@@ -461,6 +594,7 @@ async function load() {
     renderPipeline(data);
     renderCampaigns(data);
     renderTrend(data);
+    renderSignals(data.live_signals);
   } catch (e) {
     document.getElementById('overview-stats').innerHTML = `
       <div class="stat"><div class="v">!</div><div class="l">failed to load</div><div class="sub">${esc(e.message)}</div></div>
@@ -468,7 +602,19 @@ async function load() {
   }
 }
 
+// The signals tab refreshes on its own cadence — the aggregate
+// snapshot is fine to load once, but the live stream is the whole
+// point of this tab, so 8s polling keeps it actually live.
+async function refreshSignals() {
+  try {
+    const r = await fetch('/adversarial/signals');
+    if (!r.ok) return;
+    renderSignals(await r.json());
+  } catch { /* swallow — next tick retries */ }
+}
+
 load();
+setInterval(refreshSignals, 8000);
 </script>
 
 </body>

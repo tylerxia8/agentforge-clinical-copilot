@@ -10,5 +10,6 @@ venv/
 *.egg-info/
 build/
 dist/
+uv.lock
 .env
 .env.local

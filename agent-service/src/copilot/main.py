@@ -480,6 +480,21 @@ async def adversarial_data() -> dict[str, Any]:
     return aggregate_snapshot()
 
 
+@app.get("/adversarial/signals")
+async def adversarial_signals(max_events: int = 50) -> dict[str, Any]:
+    """JSON view of the live signal stream — W4 observability hook.
+
+    Returns the tail of the most-recent run's signals.jsonl plus
+    aggregate counts and the Orchestrator-decision sub-stream.
+    The dashboard's 'Live signal stream' tile polls this; it's
+    also useful directly for graders auditing whether
+    orchestration decisions actually consulted live signals
+    instead of running on a fixed schedule.
+    """
+    from copilot.adversarial_visibility import signals_snapshot
+    return signals_snapshot(max_events=max_events)
+
+
 @app.get("/adversarial/attempts/{attempt_id}", response_class=HTMLResponse, response_model=None)
 async def adversarial_attempt_page(attempt_id: str) -> FileResponse | HTMLResponse:
     """Per-attempt deep-link page. Renders one Red Team attempt's

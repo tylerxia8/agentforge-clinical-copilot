@@ -590,6 +590,45 @@ gets four new tabs:
 
 The Orchestrator reads layer 2; humans read all three.
 
+### Layer 4 (W4 addition) — in-process SignalBus + live monitor
+
+W3-final grader feedback identified that the three layers above
+were observability-driven *in spirit* (the Orchestrator reads
+observability data) but the access pattern was **snapshot-at-
+start-of-round**, not **react-to-live-signal**. W4 addresses
+this with a fourth layer that sits *between* the runner and the
+Orchestrator:
+
+- **`SignalBus`** (`agent-service/src/redteam/signals.py`) — in-
+  process pub/sub that publishes typed `SignalEvent` records on
+  five canonical event types: `campaign.started`,
+  `attempt.recorded`, `verdict.delivered`, `campaign.ended`, and
+  `orchestrator.decided`. Every event is also appended as one
+  JSON line to `<run-dir>/signals.jsonl` so the dashboard and
+  any out-of-process subscriber can tail the stream.
+- **`CoverageMonitor`** — a subscriber that maintains rolling-
+  window verdict-distribution stats per category and detects
+  *shifts* against a baseline snapshot the Orchestrator pins at
+  the start of each round. `recent_shifts()` returns the
+  signal the Orchestrator reads — categories whose
+  verdict distribution moved past a configurable threshold in
+  the last N events.
+- **Orchestrator integration** — the LLM prompt grows a
+  `# Live signal stream` section listing those shifts in
+  human-readable form, and the deterministic fallback gains a
+  live-signal override that picks a freshly-gaining-traction
+  category over the default lowest-attempt-count default. The
+  `orchestrator.decided` event carries `used_live_signals` +
+  `shifts_consulted`, which the dashboard's
+  **Live signal stream** tab surfaces — that column IS the proof
+  the autonomy hook influenced the decision, not the prompt
+  alone.
+
+The architectural payoff of doing the bus first is that the
+*next* observability-driven loop (Judge drift detector,
+auto-replay-on-deploy, intra-campaign hop mutation) is a new
+subscriber on the same bus, not a new infrastructure layer.
+
 ---
 
 ## Human approval gates

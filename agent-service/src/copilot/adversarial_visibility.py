@@ -331,12 +331,104 @@ def aggregate_snapshot() -> dict[str, Any]:
     Wrapped so the route handler is one line and the JSON is
     versioned together."""
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "coverage": coverage_snapshot(),
         "vuln_pipeline": vuln_pipeline_snapshot(),
         "recent_campaigns": recent_campaigns_snapshot(),
         "time_series": time_series_snapshot(),
+        "live_signals": signals_snapshot(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Live signal stream — W4 observability-driven autonomy proof
+# ---------------------------------------------------------------------------
+
+
+def signals_snapshot(*, max_events: int = 50) -> dict[str, Any]:
+    """Read the most-recent run's signals.jsonl and return a tail.
+
+    The campaign runner persists every published event as one JSON
+    line under
+    ``agent-service/evals/redteam_runs/<timestamp>/signals.jsonl``.
+    This function finds the most-recent run dir that has a
+    signals.jsonl, reads the tail, and returns event records
+    plus aggregate stats the dashboard tile renders.
+
+    Returns an empty stream if no signals log exists yet.
+    """
+    runs_dir = _redteam_runs_dir()
+    if not runs_dir.exists():
+        return _empty_signals_snapshot()
+
+    # Find the most-recent run dir (by name; the dir names are
+    # %Y%m%dT%H%M%SZ so lexicographic sort = chronological).
+    candidates = sorted(
+        (d for d in runs_dir.iterdir() if d.is_dir()),
+        reverse=True,
+    )
+    log_path: Path | None = None
+    for d in candidates:
+        candidate = d / "signals.jsonl"
+        if candidate.exists():
+            log_path = candidate
+            break
+
+    if log_path is None:
+        return _empty_signals_snapshot()
+
+    try:
+        raw_lines = log_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return _empty_signals_snapshot()
+
+    parsed: list[dict[str, Any]] = []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    # Tail to the most recent max_events for the timeline.
+    tail = parsed[-max_events:] if len(parsed) > max_events else parsed
+
+    # Aggregate: how many of each event type? How many Orchestrator
+    # decisions consulted live signals?
+    event_counts: dict[str, int] = defaultdict(int)
+    orchestrator_decisions: list[dict[str, Any]] = []
+    for ev in parsed:
+        event_counts[ev.get("event_type", "unknown")] += 1
+        if ev.get("event_type") == "orchestrator.decided":
+            orchestrator_decisions.append({
+                "timestamp": ev.get("timestamp"),
+                "category": ev.get("category"),
+                "rationale": (ev.get("payload") or {}).get("rationale", ""),
+                "used_live_signals": (ev.get("payload") or {}).get("used_live_signals", False),
+                "shifts_consulted": (ev.get("payload") or {}).get("shifts_consulted", []),
+            })
+
+    return {
+        "run_dir": log_path.parent.name,
+        "log_path": str(log_path.relative_to(_agent_service_root())),
+        "total_events": len(parsed),
+        "event_counts": dict(event_counts),
+        "orchestrator_decisions": orchestrator_decisions,
+        "recent_events": tail,
+    }
+
+
+def _empty_signals_snapshot() -> dict[str, Any]:
+    return {
+        "run_dir": None,
+        "log_path": None,
+        "total_events": 0,
+        "event_counts": {},
+        "orchestrator_decisions": [],
+        "recent_events": [],
     }
 
 
