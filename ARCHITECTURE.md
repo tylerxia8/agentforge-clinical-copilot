@@ -626,8 +626,10 @@ Orchestrator:
 
 The architectural payoff of doing the bus first is that the
 *next* observability-driven loop is a new subscriber on the
-same bus, not a new infrastructure layer. **W4 v2 cashes this
-claim** with a second subscriber:
+same bus, not a new infrastructure layer. **W4 v2 + v3 cash
+this claim three times — orchestration, Judge consistency,
+replay automation — with three independent subscribers on the
+single bus.** v2:
 
 - **`JudgeDriftMonitor`** — also in `signals.py`. Subscribes to
   the same `verdict.delivered` events the `CoverageMonitor`
@@ -642,9 +644,26 @@ claim** with a second subscriber:
   operator dashboard (no auto-routing yet — the response is
   human-mediated).
 
-Open subscribers still to ship: auto-replay-on-deploy (a
-subscriber that fires the regression suite on a `deploy.fired`
-event), intra-campaign hop mutation (the runner consults the
+v3 adds the third subscriber:
+
+- **`ReplaySubscriber`** (in `agent-service/src/redteam/replay.py`).
+  Subscribes to a new `deploy.fired` event type. When fired,
+  loads every confirmed regression case from
+  `agent-service/evals/w2/adversarial_findings/`, fires each
+  one against the just-deployed target via the same transport
+  the W2 eval suite uses (`evals.w2.transport.chat`), grades
+  per case using the existing W2 rubric functions, and emits a
+  full event sequence (`replay.started` →
+  `replay.case.evaluated*` → `replay.completed`). The trigger
+  surface today is `POST /adversarial/admin/replay`, gated by
+  the `REPLAY_ADMIN_TOKEN` env var; the next step (W4 v4) is
+  wiring Railway's deploy-complete webhook to the same endpoint
+  so the autonomy loop closes without operator intervention.
+
+Open subscribers still to ship: a real Railway webhook trigger
+for `deploy.fired`, an auto-promote-on-green subscriber that
+moves pending findings to live when their regression case
+passes, intra-campaign hop mutation (the runner consults the
 bus mid-campaign rather than only between campaigns), and
 cross-run baseline persistence for the `JudgeDriftMonitor` so
 calibration drift over weeks shows up alongside drift within

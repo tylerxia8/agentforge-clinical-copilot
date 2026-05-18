@@ -331,7 +331,7 @@ def aggregate_snapshot() -> dict[str, Any]:
     Wrapped so the route handler is one line and the JSON is
     versioned together."""
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "coverage": coverage_snapshot(),
         "vuln_pipeline": vuln_pipeline_snapshot(),
@@ -339,6 +339,7 @@ def aggregate_snapshot() -> dict[str, Any]:
         "time_series": time_series_snapshot(),
         "live_signals": signals_snapshot(),
         "judge_drift": judge_drift_snapshot(),
+        "replay": replay_snapshot(),
     }
 
 
@@ -529,6 +530,96 @@ def _empty_judge_drift_snapshot() -> dict[str, Any]:
         "total_llm_verdicts": 0,
         "per_category": [],
         "drift_signals": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Replay-on-deploy snapshot — reads the most-recent replay_runs/<ts>/signals.jsonl
+# ---------------------------------------------------------------------------
+
+
+def _replay_runs_dir() -> Path:
+    return _agent_service_root() / "evals" / "replay_runs"
+
+
+def replay_snapshot() -> dict[str, Any]:
+    """Read the most-recent replay run's signals.jsonl and return
+    the deploy.fired trigger metadata + per-case results + the
+    completion summary.
+
+    Mirrors the campaign signals_snapshot pattern. The dashboard's
+    Replay-on-deploy tile reads this; ops can also curl
+    ``/adversarial/replay`` directly to audit whether a given
+    deploy actually fired its regression suite.
+    """
+    runs_dir = _replay_runs_dir()
+    if not runs_dir.exists():
+        return _empty_replay_snapshot()
+
+    candidates = sorted(
+        (d for d in runs_dir.iterdir() if d.is_dir()),
+        reverse=True,
+    )
+    log_path: Path | None = None
+    for d in candidates:
+        candidate = d / "signals.jsonl"
+        if candidate.exists():
+            log_path = candidate
+            break
+
+    if log_path is None:
+        return _empty_replay_snapshot()
+
+    try:
+        raw_lines = log_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return _empty_replay_snapshot()
+
+    events: list[dict[str, Any]] = []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    deploy_fired: dict[str, Any] | None = None
+    replay_started: dict[str, Any] | None = None
+    replay_completed: dict[str, Any] | None = None
+    case_results: list[dict[str, Any]] = []
+
+    for ev in events:
+        et = ev.get("event_type")
+        payload = ev.get("payload") or {}
+        if et == "deploy.fired":
+            deploy_fired = {"timestamp": ev.get("timestamp"), **payload}
+        elif et == "replay.started":
+            replay_started = {"timestamp": ev.get("timestamp"), **payload}
+        elif et == "replay.case.evaluated":
+            case_results.append({"timestamp": ev.get("timestamp"), **payload})
+        elif et == "replay.completed":
+            replay_completed = {"timestamp": ev.get("timestamp"), **payload}
+
+    return {
+        "run_dir": log_path.parent.name,
+        "log_path": str(log_path.relative_to(_agent_service_root())),
+        "deploy_fired": deploy_fired,
+        "replay_started": replay_started,
+        "replay_completed": replay_completed,
+        "case_results": case_results,
+    }
+
+
+def _empty_replay_snapshot() -> dict[str, Any]:
+    return {
+        "run_dir": None,
+        "log_path": None,
+        "deploy_fired": None,
+        "replay_started": None,
+        "replay_completed": None,
+        "case_results": [],
     }
 
 

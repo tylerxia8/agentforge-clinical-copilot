@@ -67,6 +67,12 @@ EVENT_ATTEMPT_RECORDED = "attempt.recorded"
 EVENT_VERDICT_DELIVERED = "verdict.delivered"
 EVENT_CAMPAIGN_ENDED = "campaign.ended"
 EVENT_ORCHESTRATOR_DECIDED = "orchestrator.decided"
+# W4 v3 — replay-on-deploy event types. ``deploy.fired`` is the
+# external trigger; the rest are the replay subscriber's output.
+EVENT_DEPLOY_FIRED = "deploy.fired"
+EVENT_REPLAY_STARTED = "replay.started"
+EVENT_REPLAY_CASE_EVALUATED = "replay.case.evaluated"
+EVENT_REPLAY_COMPLETED = "replay.completed"
 
 
 @dataclass(slots=True)
@@ -745,6 +751,100 @@ class JudgeDriftMonitor:
                 for cat, s in stats.items()
             }
             self._total_llm_at_baseline = self._total_llm_seen
+
+
+def emit_deploy_fired(
+    bus: SignalBus,
+    *,
+    target_url: str,
+    image_digest: str | None,
+    trigger: str,
+) -> None:
+    """The external signal — published when a new build is
+    deployed and ready for regression replay. Today this fires
+    from the ``POST /adversarial/admin/replay`` endpoint; once
+    Railway webhooks are wired, the platform fires it
+    autonomously on deploy-complete.
+    """
+    bus.publish(SignalEvent(
+        event_type=EVENT_DEPLOY_FIRED,
+        timestamp=datetime.now(timezone.utc),
+        payload={
+            "target_url": target_url,
+            "image_digest": image_digest,
+            "trigger": trigger,
+        },
+    ))
+
+
+def emit_replay_started(
+    bus: SignalBus,
+    *,
+    replay_id: str,
+    target_url: str,
+    case_count: int,
+    include_pending: bool,
+) -> None:
+    bus.publish(SignalEvent(
+        event_type=EVENT_REPLAY_STARTED,
+        timestamp=datetime.now(timezone.utc),
+        payload={
+            "replay_id": replay_id,
+            "target_url": target_url,
+            "case_count": case_count,
+            "include_pending": include_pending,
+        },
+    ))
+
+
+def emit_replay_case_evaluated(
+    bus: SignalBus,
+    *,
+    replay_id: str,
+    case_id: str,
+    vuln_id: str | None,
+    is_pending: bool,
+    passed: bool,
+    rubric_results: dict[str, bool],
+    error: str | None = None,
+) -> None:
+    bus.publish(SignalEvent(
+        event_type=EVENT_REPLAY_CASE_EVALUATED,
+        timestamp=datetime.now(timezone.utc),
+        payload={
+            "replay_id": replay_id,
+            "case_id": case_id,
+            "vuln_id": vuln_id,
+            "is_pending": is_pending,
+            "passed": passed,
+            "rubric_results": rubric_results,
+            "error": error,
+        },
+    ))
+
+
+def emit_replay_completed(
+    bus: SignalBus,
+    *,
+    replay_id: str,
+    case_count: int,
+    passed_count: int,
+    failed_count: int,
+    error_count: int,
+    elapsed_seconds: float,
+) -> None:
+    bus.publish(SignalEvent(
+        event_type=EVENT_REPLAY_COMPLETED,
+        timestamp=datetime.now(timezone.utc),
+        payload={
+            "replay_id": replay_id,
+            "case_count": case_count,
+            "passed_count": passed_count,
+            "failed_count": failed_count,
+            "error_count": error_count,
+            "elapsed_seconds": elapsed_seconds,
+        },
+    ))
 
 
 def emit_orchestrator_decided(

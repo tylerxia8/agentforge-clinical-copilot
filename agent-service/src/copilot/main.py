@@ -495,6 +495,97 @@ async def adversarial_signals(max_events: int = 50) -> dict[str, Any]:
     return signals_snapshot(max_events=max_events)
 
 
+class ReplayAdminRequest(BaseModel):
+    include_pending: bool = False
+    target_url: str | None = None
+
+
+@app.post("/adversarial/admin/replay")
+async def adversarial_admin_replay(
+    body: ReplayAdminRequest,
+    x_replay_admin_token: str | None = Header(default=None, alias="X-Replay-Admin-Token"),
+) -> dict[str, Any]:
+    """Manually fire the replay-on-deploy subscriber against the
+    current target build. W4 v3.
+
+    This is today's *stand-in* for a real Railway deploy webhook —
+    same endpoint the webhook will POST to once wired. Auth is via
+    an env-gated token (``REPLAY_ADMIN_TOKEN``); if the env is
+    unset, the endpoint refuses (503) rather than running without
+    any auth at all.
+
+    Lifecycle: each call creates a fresh per-replay SignalBus with
+    its own ``signals.jsonl`` under
+    ``agent-service/evals/replay_runs/<timestamp>/``. The bus is
+    short-lived (one replay), the events are durable on disk for
+    the dashboard to surface. This keeps the admin endpoint stateless
+    and avoids a long-lived process-level bus that would have to be
+    shared across requests.
+    """
+    import asyncio
+    import os
+    from datetime import datetime, timezone
+
+    expected = os.environ.get("REPLAY_ADMIN_TOKEN")
+    if not expected:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "REPLAY_ADMIN_TOKEN not configured; replay endpoint is disabled",
+        )
+    if not x_replay_admin_token or not secrets.compare_digest(
+        expected, x_replay_admin_token,
+    ):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid replay admin token")
+
+    from redteam.replay import ReplaySubscriber
+    from redteam.signals import SignalBus, emit_deploy_fired
+
+    target_url = (
+        body.target_url
+        or os.environ.get("AGENT_URL")
+        or "https://copilot-agent-production-ba87.up.railway.app"
+    )
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = (
+        Path(__file__).resolve().parents[2]
+        / "evals" / "replay_runs" / timestamp
+    )
+    run_dir.mkdir(parents=True, exist_ok=True)
+    bus = SignalBus(persist_path=run_dir / "signals.jsonl")
+    subscriber = ReplaySubscriber(bus=bus, include_pending=body.include_pending)
+    bus.subscribe(subscriber.on_event)
+
+    emit_deploy_fired(
+        bus,
+        target_url=target_url,
+        image_digest=None,
+        trigger="admin_endpoint",
+    )
+
+    # Wait for the subscriber's replay task to complete. The
+    # subscriber schedules ``run_replay`` on the running event loop;
+    # we await the task(s) it spawned so the HTTP response only
+    # returns once the replay is done.
+    while subscriber.replays_in_flight:
+        task = subscriber.replays_in_flight.pop()
+        try:
+            await task
+        except Exception as e:  # noqa: BLE001
+            logger.exception("replay task raised: %s", e)
+
+    return {
+        "replay_dir": run_dir.name,
+        "signals_path": str(
+            (run_dir / "signals.jsonl").relative_to(
+                Path(__file__).resolve().parents[2]
+            )
+        ),
+        "include_pending": body.include_pending,
+        "target_url": target_url,
+    }
+
+
 @app.get("/adversarial/judge-drift")
 async def adversarial_judge_drift() -> dict[str, Any]:
     """JSON view of LLM-Judge confidence drift per category.
@@ -510,6 +601,22 @@ async def adversarial_judge_drift() -> dict[str, Any]:
     """
     from copilot.adversarial_visibility import judge_drift_snapshot
     return judge_drift_snapshot()
+
+
+@app.get("/adversarial/replay")
+async def adversarial_replay() -> dict[str, Any]:
+    """JSON view of the most-recent replay-on-deploy run.
+
+    The replay automation loop is the third W3-final-grader bullet
+    being converted to observability-driven. A ``deploy.fired``
+    signal triggers a ReplaySubscriber which fires every confirmed
+    regression case against the just-deployed target and emits
+    per-case pass/fail + a completion summary. This endpoint
+    returns the most recent such run; the dashboard's
+    Replay-on-deploy tile surfaces it.
+    """
+    from copilot.adversarial_visibility import replay_snapshot
+    return replay_snapshot()
 
 
 @app.get("/adversarial/attempts/{attempt_id}", response_class=HTMLResponse, response_model=None)

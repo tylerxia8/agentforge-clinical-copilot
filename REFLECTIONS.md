@@ -220,7 +220,7 @@ filter, magnitude-sort ordering. 69/69 redteam tests passing.
 **What this still does NOT ship** (W4 v3+ candidates):
 
 - **Intra-campaign reaction.** Same as v1's deferred list.
-- **Auto-replay on deploy.** Same as v1's deferred list.
+- ~~**Auto-replay on deploy.**~~ **Shipped in v3 (below).**
 - **Pub/sub across processes.** Same as v1's deferred list.
 - **Baseline persistence across runs.** Today the drift
   baseline lives in-memory during one run; the dashboard
@@ -231,3 +231,106 @@ filter, magnitude-sort ordering. 69/69 redteam tests passing.
   `JudgeDriftMonitor` needs a `seed_baseline_from_disk()`
   method. Worth doing once there are enough runs accumulated
   for the cross-run comparison to be statistically meaningful.
+
+---
+
+## W4 v3 — Replay-on-deploy (third subscriber on the bus)
+
+Closes the third W3-final-grader bullet ("replay automation").
+Same pattern as v1 + v2: a new event type, a new subscriber, a
+new dashboard surface. The architectural payoff of the bus is
+now demonstrated three times — orchestration (v1), Judge
+consistency (v2), replay automation (v3).
+
+**Mechanism.** A `deploy.fired` signal triggers the
+`ReplaySubscriber` (`agent-service/src/redteam/replay.py`)
+which loads every confirmed regression case from
+`agent-service/evals/w2/adversarial_findings/`, fires each one
+against the just-deployed target via the same transport the W2
+eval suite uses (`evals.w2.transport.chat`), grades each
+response against its sidecar's rubrics, and emits four event
+types end-to-end:
+
+- `deploy.fired` — the trigger (carries `target_url`,
+  `image_digest`, `trigger`)
+- `replay.started` — case count + include-pending flag
+- `replay.case.evaluated` — per-case `passed: bool` +
+  `rubric_results: {rubric_name: bool}` + optional `error`
+  string for cases that raised mid-chat
+- `replay.completed` — summary stats (case_count, passed_count,
+  failed_count, error_count, elapsed_seconds)
+
+**Trigger surface.** Today's stand-in is
+`POST /adversarial/admin/replay`, gated by the
+`REPLAY_ADMIN_TOKEN` env var (the endpoint returns 503 if the
+env is unset, refusing to run without any auth at all). The
+endpoint constructs a fresh per-request `SignalBus` writing to
+`agent-service/evals/replay_runs/<timestamp>/signals.jsonl`,
+publishes `deploy.fired`, awaits the subscriber's replay task,
+and returns the run dir name. The replay is bounded by the
+existing target — there's no looping or fanout.
+
+**Why per-request bus, not lifespan-managed.** The first
+design had a long-lived runtime bus instantiated at FastAPI
+startup. A per-request bus turned out cleaner: each replay
+gets its own dedicated `signals.jsonl` exactly like the
+runner's per-campaign log, the dashboard's "most-recent
+run" scan logic applies symmetrically to both, and there's no
+state to clean up between replays. The trade-off is that a
+multi-source future (Railway webhook + manual admin endpoint
+fanning into one subscriber) would need a different pattern,
+but that's W4 v4+ work.
+
+**Why reuse `evals.w2.transport.chat`.** "Replay" should not
+mean "a second, parallel testing path that drifts away from
+the real eval gate." It should mean "the same eval suite,
+fired from a signal instead of from CI." Reusing the W2
+transport guarantees the replay exercises the same HMAC auth,
+same `/agent/chat` endpoint, same parse path the regression
+gate uses on every PR.
+
+**Surfaces:**
+
+- `agent-service/src/redteam/replay.py` — `ReplayCase`,
+  `load_replay_cases(include_pending=False)`,
+  `_grade_response()`, `run_replay()`, `ReplaySubscriber`
+- New event types + emit helpers in `signals.py`
+- `POST /adversarial/admin/replay` — admin-token-gated trigger
+- `GET /adversarial/replay` — JSON view of the most-recent
+  replay (deploy_fired metadata + replay_started + per-case
+  results + replay_completed summary)
+- **Replay-on-deploy** card on the Live signal stream tab:
+  summary row (trigger + target + case count + result pill +
+  elapsed) plus per-case table (case_id, vuln_id,
+  live/pending status, pass/fail pill, rubric-result pills)
+
+**Tests (in `tests/test_redteam_replay.py`):** 12 new — case
+loading (live-only default, include-pending opt-in, skip
+unsupported `kind`), rubric grading (safe_refusal pass,
+unknown-rubric-fails-closed, response_length_bounded both
+sides), full emission sequence (started + one per-case +
+completed), failure + error counting, summary-matches-per-case
+invariant, subscriber-ignores-non-deploy, subscriber-schedules-
+on-deploy-fired (full async path), subscriber-skips-cleanly-
+without-event-loop. **81/81 redteam tests passing** across all
+W4 subscribers + the existing W3 suite.
+
+**Open subscriber slots after v3** (W4 v4+ candidates):
+
+- **Real Railway webhook trigger.** Today the admin endpoint
+  IS the trigger. Wire Railway's deploy-complete webhook to
+  POST to `/adversarial/admin/replay` so the autonomy loop
+  closes: a deploy *causes* a replay without operator
+  intervention. The replay subscriber itself doesn't need
+  changes; only the trigger source does.
+- **Auto-promote-on-green.** A new subscriber to
+  `replay.completed` events that watches for runs where
+  `failed_count + error_count == 0`. If a pending finding's
+  regression case passes, it could auto-promote the JSON
+  sidecar from `_pending/` to live. Pairs naturally with the
+  existing trust gate (critical-severity stays pending,
+  high/medium/low gets auto-promoted on green).
+- **Intra-campaign reaction.** Same as v1's deferred list.
+- **Pub/sub across processes.** Same as v1's deferred list.
+- **Baseline persistence across runs** (for the JudgeDrift
+  Monitor). Same as v2's deferred list.

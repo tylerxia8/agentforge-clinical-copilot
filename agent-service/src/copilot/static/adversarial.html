@@ -341,6 +341,45 @@
     </div>
 
     <div class="card">
+      <h2>Replay-on-deploy <span class="mono" style="font-size:11px; color: var(--muted); margin-left: 8px;" id="replay-meta">—</span></h2>
+      <div class="card-sub">
+        A <code>deploy.fired</code> signal triggers the
+        ReplaySubscriber which fires every confirmed regression
+        case (from <code>evals/w2/adversarial_findings/</code>)
+        against the just-deployed target and reports per-case
+        pass/fail. Today the trigger is the
+        <code>POST /adversarial/admin/replay</code> endpoint;
+        Railway webhook integration lands once the W4 v4 wiring
+        is in place. Empty state below = no replay has been
+        invoked yet on the current build.
+      </div>
+      <table id="replay-summary-table">
+        <thead>
+          <tr>
+            <th>Trigger</th>
+            <th>Target</th>
+            <th>Cases</th>
+            <th>Result</th>
+            <th>Elapsed</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="5" class="empty">no replay has been invoked yet</td></tr></tbody>
+      </table>
+      <table id="replay-cases-table" style="margin-top:16px;">
+        <thead>
+          <tr>
+            <th>Case</th>
+            <th>Vuln</th>
+            <th>Status</th>
+            <th>Passed</th>
+            <th>Rubrics</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="5" class="empty">no per-case results</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
       <h2>Event timeline <span class="mono" style="font-size:11px; color: var(--muted); margin-left: 8px;" id="signals-timeline-meta">tail of most-recent run</span></h2>
       <div class="card-sub">
         Live stream of every event the campaign runner publishes
@@ -661,6 +700,64 @@ function renderJudgeDrift(drift) {
       : 'no run yet';
 }
 
+function renderReplay(rep) {
+  rep = rep || { deploy_fired: null, replay_started: null, replay_completed: null, case_results: [], run_dir: null };
+  const summary = document.querySelector('#replay-summary-table tbody');
+  const cases = document.querySelector('#replay-cases-table tbody');
+
+  if (!rep.deploy_fired) {
+    summary.innerHTML = '<tr><td colspan="5" class="empty">no replay has been invoked yet</td></tr>';
+    cases.innerHTML = '<tr><td colspan="5" class="empty">no per-case results</td></tr>';
+    document.getElementById('replay-meta').textContent = 'no replay yet';
+    return;
+  }
+
+  const df = rep.deploy_fired;
+  const rs = rep.replay_started || {};
+  const rc = rep.replay_completed || {};
+  const totalCases = rc.case_count != null ? rc.case_count : (rs.case_count != null ? rs.case_count : 0);
+  const passed = rc.passed_count || 0;
+  const failed = rc.failed_count || 0;
+  const errors = rc.error_count || 0;
+  const elapsed = rc.elapsed_seconds != null ? rc.elapsed_seconds.toFixed(1) + 's' : 'in flight…';
+  const resultPill = rc.replay_id
+    ? (failed + errors === 0 ? pill('all passed', 'success')
+       : pill(`${failed} failed, ${errors} errored`, 'warning'))
+    : pill('running', 'pending');
+
+  summary.innerHTML = `
+    <tr>
+      <td><span class="mono">${esc(df.trigger || '—')}</span><div class="rationale">fired ${fmtTs(df.timestamp)}</div></td>
+      <td class="mono">${esc(df.target_url || '—')}${rs.include_pending ? `<div class="rationale">includes pending</div>` : ''}</td>
+      <td><strong>${totalCases}</strong></td>
+      <td>${resultPill}${rc.replay_id ? ` <span class="mono" style="font-size:11px; color: var(--muted);">${passed}/${totalCases}</span>` : ''}</td>
+      <td class="mono">${elapsed}</td>
+    </tr>
+  `;
+
+  if (!rep.case_results.length) {
+    cases.innerHTML = '<tr><td colspan="5" class="empty">no per-case results</td></tr>';
+  } else {
+    cases.innerHTML = rep.case_results.map(c => {
+      const rubricList = Object.entries(c.rubric_results || {})
+        .map(([n, p]) => `<span class="pill pill-${p ? 'success' : 'high'}" style="font-size:10px;">${esc(n)}</span>`)
+        .join(' ');
+      return `
+        <tr>
+          <td class="mono">${esc(c.case_id)}</td>
+          <td class="mono">${c.vuln_id ? esc(c.vuln_id) : '—'}</td>
+          <td>${c.is_pending ? pill('pending', 'pending') : pill('live', 'success')}</td>
+          <td>${c.passed ? pill('pass', 'success') : pill('fail', 'high')}${c.error ? `<div class="rationale">${esc(c.error)}</div>` : ''}</td>
+          <td>${rubricList || '<em style="color: var(--muted); font-size:11px;">no rubrics fired</em>'}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  document.getElementById('replay-meta').textContent =
+    rep.run_dir ? `from run ${rep.run_dir}` : '—';
+}
+
 async function load() {
   try {
     const r = await fetch('/adversarial/data');
@@ -673,6 +770,7 @@ async function load() {
     renderTrend(data);
     renderSignals(data.live_signals);
     renderJudgeDrift(data.judge_drift);
+    renderReplay(data.replay);
   } catch (e) {
     document.getElementById('overview-stats').innerHTML = `
       <div class="stat"><div class="v">!</div><div class="l">failed to load</div><div class="sub">${esc(e.message)}</div></div>
@@ -685,12 +783,14 @@ async function load() {
 // point of this tab, so 8s polling keeps it actually live.
 async function refreshSignals() {
   try {
-    const [sr, dr] = await Promise.all([
+    const [sr, dr, rp] = await Promise.all([
       fetch('/adversarial/signals'),
       fetch('/adversarial/judge-drift'),
+      fetch('/adversarial/replay'),
     ]);
     if (sr.ok) renderSignals(await sr.json());
     if (dr.ok) renderJudgeDrift(await dr.json());
+    if (rp.ok) renderReplay(await rp.json());
   } catch { /* swallow — next tick retries */ }
 }
 
