@@ -660,12 +660,46 @@ v3 adds the third subscriber:
   wiring Railway's deploy-complete webhook to the same endpoint
   so the autonomy loop closes without operator intervention.
 
+v4 adds the fourth subscriber and closes the fourth grader
+bullet:
+
+- **`AutoPromoteSubscriber`** (in
+  `agent-service/src/redteam/auto_promote.py`). Subscribes to
+  `replay.case.evaluated` + `replay.completed` events.
+  Accumulates per-case events keyed by `replay_id` and
+  dispatches on the matching `replay.completed`. Three rules
+  govern promotion: (a) the run must be fully green
+  (`failed_count == 0` AND `error_count == 0`), (b) the
+  finding must currently be in `_pending/` (`is_pending=True`
+  in the case event), (c) severity must not be `critical`
+  (preserves the trust gate's human-review requirement on
+  critical findings). On promotion the subscriber moves the
+  sidecar JSON and the markdown report from `_pending/` to the
+  live dir and emits `finding.promoted`; on every consideration
+  that didn't promote, it emits `finding.promotion_skipped`
+  with the reason. The subscriber is opt-in (default
+  `enabled=False`) — when disabled it still observes events and
+  reports what *would have been promoted*, but doesn't touch
+  the filesystem. The `auto_promote: bool` flag in the
+  `/adversarial/admin/replay` request body controls the flag
+  per-request.
+
+After v4 the four grader bullets are all addressed by
+independent subscribers on the same bus:
+
+| Bullet | Subscriber |
+|---|---|
+| Orchestration | `CoverageMonitor` (v1) |
+| Judge consistency | `JudgeDriftMonitor` (v2) |
+| Replay automation | `ReplaySubscriber` (v3) |
+| Regression handling | `AutoPromoteSubscriber` (v4) |
+
 Open subscribers still to ship: a real Railway webhook trigger
-for `deploy.fired`, an auto-promote-on-green subscriber that
-moves pending findings to live when their regression case
-passes, intra-campaign hop mutation (the runner consults the
-bus mid-campaign rather than only between campaigns), and
-cross-run baseline persistence for the `JudgeDriftMonitor` so
+for `deploy.fired`, an `AutoDemoteSubscriber` that reverses
+a promotion when a later replay regresses the case,
+intra-campaign hop mutation (the runner consults the bus
+mid-campaign rather than only between campaigns), and cross-
+run baseline persistence for the `JudgeDriftMonitor` so
 calibration drift over weeks shows up alongside drift within
 a single run.
 

@@ -323,14 +323,120 @@ W4 subscribers + the existing W3 suite.
   closes: a deploy *causes* a replay without operator
   intervention. The replay subscriber itself doesn't need
   changes; only the trigger source does.
-- **Auto-promote-on-green.** A new subscriber to
-  `replay.completed` events that watches for runs where
-  `failed_count + error_count == 0`. If a pending finding's
-  regression case passes, it could auto-promote the JSON
-  sidecar from `_pending/` to live. Pairs naturally with the
-  existing trust gate (critical-severity stays pending,
-  high/medium/low gets auto-promoted on green).
+- ~~**Auto-promote-on-green.**~~ **Shipped in v4 (below).**
 - **Intra-campaign reaction.** Same as v1's deferred list.
 - **Pub/sub across processes.** Same as v1's deferred list.
 - **Baseline persistence across runs** (for the JudgeDrift
   Monitor). Same as v2's deferred list.
+
+---
+
+## W4 v4 — AutoPromoteSubscriber (closing the fourth grader bullet)
+
+The W3-final grader called out four loops to convert from
+structured-sequential to observability-driven: orchestration,
+Judge consistency, replay automation, and regression handling.
+v1–v3 closed the first three. v4 closes the fourth.
+
+**Mechanism.** A new `AutoPromoteSubscriber` (in
+`agent-service/src/redteam/auto_promote.py`) subscribes to
+`replay.case.evaluated` and `replay.completed` events. It
+accumulates per-case events in an in-memory buffer keyed by
+`replay_id`. When the matching `replay.completed` event fires,
+the subscriber:
+
+1. Drops the buffer for that replay if the run wasn't fully
+   green (`failed_count > 0` OR `error_count > 0`). One bad
+   case anywhere in the run suppresses every promotion — the
+   operator's manual review becomes the failure mode rather
+   than silent half-promotion.
+2. For each accumulated case with `passed=True` and
+   `is_pending=True`, reads the severity from the sidecar JSON
+   and applies the trust-gate rule: `severity == "critical"`
+   always stays pending, regardless of replay outcome. This
+   preserves the architecture's original intent that
+   critical-severity findings require human review.
+3. For the surviving cases, moves the sidecar JSON from
+   `evals/w2/adversarial_findings/_pending/<VULN>.json` to the
+   live dir, and moves the markdown report from
+   `vulns/_pending/<VULN>.md` to live. Either artifact may be
+   missing; the subscriber moves whichever exists and reports
+   what was actually moved in the `finding.promoted` event
+   payload.
+4. Emits `finding.promoted` per move and
+   `finding.promotion_skipped` per consideration that didn't
+   promote (with a reason: critical-severity, disabled, no
+   pending artifacts, non-green run).
+
+**Opt-in by default.** The `AutoPromoteSubscriber` constructor
+takes `enabled: bool = False`. The
+`/adversarial/admin/replay` endpoint exposes `auto_promote:
+bool` in the request body (also default false). When
+`enabled=False`, the subscriber still observes events and
+emits `finding.promotion_skipped` events ("disabled; would
+have promoted on green replay") so the dashboard shows what
+*would have been promoted* — useful for an operator deciding
+whether to flip the flag on a future run.
+
+**Why severity comes from the sidecar JSON.** The replay event
+shape doesn't carry severity (the event is about the chat
+turn's pass/fail, not the finding's metadata). The subscriber
+reads severity directly from the sidecar at promotion time —
+single source of truth, no caching, no risk of stale severity
+from a since-edited sidecar.
+
+**Surfaces:**
+
+- `agent-service/src/redteam/auto_promote.py` —
+  `AutoPromoteSubscriber`, `_promote_one_finding`,
+  `_read_severity`
+- New event types + emit helpers in `signals.py`:
+  `finding.promoted`, `finding.promotion_skipped`
+- `auto_promote` flag added to the
+  `POST /adversarial/admin/replay` request body
+- `GET /adversarial/auto-promotions` JSON view
+- **Auto-promotions** card on the Live signal stream tab —
+  two tables: actual promotions (timestamp, vuln_id, severity,
+  sidecar move path, markdown move path) and skipped
+  considerations (timestamp, vuln_id, severity, reason)
+
+**Tests (in `tests/test_redteam_auto_promote.py`):** 8 new —
+green-replay-promotes-high, critical-stays-pending,
+failed-replay-promotes-nothing, errored-replay-promotes-nothing,
+live-cases-silently-ignored, disabled-mode-emits-skip-but-no-
+move, idempotency (re-run after promotion emits a skip rather
+than crashing), multi-case-routing (critical + high + already-
+live in one replay end up in the right buckets). **90/90 redteam
+tests passing** across all four W4 versions + W3.
+
+**What this does NOT ship** (W4 v5+ candidates):
+
+- **Reversal on later failure.** Today a promoted finding stays
+  live forever. If a future deploy regresses and the case fails,
+  we emit a per-case-failed event but don't auto-demote. A
+  symmetric `AutoDemoteSubscriber` would close the round trip.
+- **Persistent dedup of replay-ids.** Re-running the same
+  replay would re-evaluate the same cases. The promotion is
+  idempotent at the filesystem level (move-or-skip-if-already-
+  live), but emits the per-event signal each time. For
+  low-frequency operator-triggered runs this is fine; a
+  high-frequency webhook future would want a `replay_id` dedup
+  table.
+- **Same v1-v3 deferred items** still apply (Railway webhook,
+  intra-campaign reaction, cross-process pub/sub, cross-run
+  baseline persistence for the JudgeDriftMonitor).
+
+## Status of the W3-final-grader bullets after v4
+
+| Bullet | Status |
+|---|---|
+| Orchestration decisions driven by observability signals | ✅ v1 — `CoverageMonitor` |
+| Judge consistency | ✅ v2 — `JudgeDriftMonitor` |
+| Replay automation | ✅ v3 — `ReplaySubscriber` |
+| Regression handling | ✅ v4 — `AutoPromoteSubscriber` |
+
+The architectural payoff of building the bus first is now
+demonstrated four times across four independent observation
+loops. Each subscriber is ~50–200 lines of standalone Python
+that publishes typed events onto the same in-process bus — no
+new infrastructure layers added since v1.

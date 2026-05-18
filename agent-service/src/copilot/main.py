@@ -498,6 +498,7 @@ async def adversarial_signals(max_events: int = 50) -> dict[str, Any]:
 class ReplayAdminRequest(BaseModel):
     include_pending: bool = False
     target_url: str | None = None
+    auto_promote: bool = False
 
 
 @app.post("/adversarial/admin/replay")
@@ -537,6 +538,7 @@ async def adversarial_admin_replay(
     ):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid replay admin token")
 
+    from redteam.auto_promote import AutoPromoteSubscriber
     from redteam.replay import ReplaySubscriber
     from redteam.signals import SignalBus, emit_deploy_fired
 
@@ -553,8 +555,10 @@ async def adversarial_admin_replay(
     )
     run_dir.mkdir(parents=True, exist_ok=True)
     bus = SignalBus(persist_path=run_dir / "signals.jsonl")
-    subscriber = ReplaySubscriber(bus=bus, include_pending=body.include_pending)
-    bus.subscribe(subscriber.on_event)
+    replay_subscriber = ReplaySubscriber(bus=bus, include_pending=body.include_pending)
+    auto_promote_subscriber = AutoPromoteSubscriber(bus=bus, enabled=body.auto_promote)
+    bus.subscribe(replay_subscriber.on_event)
+    bus.subscribe(auto_promote_subscriber.on_event)
 
     emit_deploy_fired(
         bus,
@@ -563,12 +567,15 @@ async def adversarial_admin_replay(
         trigger="admin_endpoint",
     )
 
-    # Wait for the subscriber's replay task to complete. The
+    # Wait for the replay subscriber's task to complete. The
     # subscriber schedules ``run_replay`` on the running event loop;
     # we await the task(s) it spawned so the HTTP response only
-    # returns once the replay is done.
-    while subscriber.replays_in_flight:
-        task = subscriber.replays_in_flight.pop()
+    # returns once the replay is done. The AutoPromoteSubscriber
+    # is synchronous (file moves on event arrival), so by the time
+    # replay.completed is published all promotions have been
+    # evaluated already.
+    while replay_subscriber.replays_in_flight:
+        task = replay_subscriber.replays_in_flight.pop()
         try:
             await task
         except Exception as e:  # noqa: BLE001
@@ -582,6 +589,7 @@ async def adversarial_admin_replay(
             )
         ),
         "include_pending": body.include_pending,
+        "auto_promote": body.auto_promote,
         "target_url": target_url,
     }
 
@@ -617,6 +625,23 @@ async def adversarial_replay() -> dict[str, Any]:
     """
     from copilot.adversarial_visibility import replay_snapshot
     return replay_snapshot()
+
+
+@app.get("/adversarial/auto-promotions")
+async def adversarial_auto_promotions() -> dict[str, Any]:
+    """JSON view of the most-recent replay run's auto-promotion
+    decisions. W4 v4 — the regression-handling autonomy bullet.
+
+    Each ``finding.promoted`` event represents a finding moved
+    from ``_pending/`` to live in response to a green replay;
+    each ``finding.promotion_skipped`` represents a case the
+    AutoPromoteSubscriber considered but didn't promote (most
+    common reasons: critical-severity preserved by trust gate,
+    auto_promote flag was disabled on the replay invocation, or
+    the replay run wasn't fully green).
+    """
+    from copilot.adversarial_visibility import auto_promote_snapshot
+    return auto_promote_snapshot()
 
 
 @app.get("/adversarial/attempts/{attempt_id}", response_class=HTMLResponse, response_model=None)

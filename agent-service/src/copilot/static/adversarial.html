@@ -380,6 +380,41 @@
     </div>
 
     <div class="card">
+      <h2>Auto-promotions <span class="mono" style="font-size:11px; color: var(--muted); margin-left: 8px;" id="autopromote-meta">—</span></h2>
+      <div class="card-sub">
+        Findings the AutoPromoteSubscriber moved from
+        <code>_pending/</code> to live in response to a green
+        replay (failed_count + error_count == 0). Critical-severity
+        findings always stay pending to preserve the trust gate's
+        human-review requirement. Skipped rows below show what was
+        considered but bypassed and why.
+      </div>
+      <table id="autopromote-promoted-table">
+        <thead>
+          <tr>
+            <th>Promoted at</th>
+            <th>Vuln</th>
+            <th>Severity</th>
+            <th>Sidecar move</th>
+            <th>Markdown move</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="5" class="empty">no auto-promotions in this run</td></tr></tbody>
+      </table>
+      <table id="autopromote-skipped-table" style="margin-top:16px;">
+        <thead>
+          <tr>
+            <th>Skipped at</th>
+            <th>Vuln</th>
+            <th>Severity</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="4" class="empty">no skipped promotions</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
       <h2>Event timeline <span class="mono" style="font-size:11px; color: var(--muted); margin-left: 8px;" id="signals-timeline-meta">tail of most-recent run</span></h2>
       <div class="card-sub">
         Live stream of every event the campaign runner publishes
@@ -758,6 +793,52 @@ function renderReplay(rep) {
     rep.run_dir ? `from run ${rep.run_dir}` : '—';
 }
 
+function renderAutoPromote(ap) {
+  ap = ap || { promoted: [], skipped: [], promoted_count: 0, skipped_count: 0, run_dir: null };
+  const promoted = document.querySelector('#autopromote-promoted-table tbody');
+  const skipped = document.querySelector('#autopromote-skipped-table tbody');
+
+  if (!ap.promoted.length) {
+    promoted.innerHTML = '<tr><td colspan="5" class="empty">no auto-promotions in this run</td></tr>';
+  } else {
+    promoted.innerHTML = ap.promoted.slice().reverse().map(p => {
+      const sidecar = p.sidecar_moved_from
+        ? `<span class="mono" style="font-size:11px;">_pending/${esc(p.vuln_id)}.json → ${esc(p.vuln_id)}.json</span>`
+        : '<em style="color: var(--muted); font-size:11px;">(none)</em>';
+      const md = p.markdown_moved_from
+        ? `<span class="mono" style="font-size:11px;">_pending/${esc(p.vuln_id)}.md → ${esc(p.vuln_id)}.md</span>`
+        : '<em style="color: var(--muted); font-size:11px;">(none)</em>';
+      return `
+        <tr>
+          <td class="mono">${fmtTs(p.timestamp)}</td>
+          <td class="mono">${esc(p.vuln_id)}</td>
+          <td>${severityPill(p.severity || 'unknown')}</td>
+          <td>${sidecar}</td>
+          <td>${md}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  if (!ap.skipped.length) {
+    skipped.innerHTML = '<tr><td colspan="4" class="empty">no skipped promotions</td></tr>';
+  } else {
+    skipped.innerHTML = ap.skipped.slice().reverse().map(s => `
+      <tr>
+        <td class="mono">${fmtTs(s.timestamp)}</td>
+        <td class="mono">${esc(s.vuln_id)}</td>
+        <td>${severityPill(s.severity || 'unknown')}</td>
+        <td><span class="rationale">${esc(s.reason)}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  document.getElementById('autopromote-meta').textContent =
+    ap.run_dir
+      ? `from run ${ap.run_dir} — ${ap.promoted_count} promoted, ${ap.skipped_count} skipped`
+      : 'no run yet';
+}
+
 async function load() {
   try {
     const r = await fetch('/adversarial/data');
@@ -771,6 +852,7 @@ async function load() {
     renderSignals(data.live_signals);
     renderJudgeDrift(data.judge_drift);
     renderReplay(data.replay);
+    renderAutoPromote(data.auto_promote);
   } catch (e) {
     document.getElementById('overview-stats').innerHTML = `
       <div class="stat"><div class="v">!</div><div class="l">failed to load</div><div class="sub">${esc(e.message)}</div></div>
@@ -783,14 +865,16 @@ async function load() {
 // point of this tab, so 8s polling keeps it actually live.
 async function refreshSignals() {
   try {
-    const [sr, dr, rp] = await Promise.all([
+    const [sr, dr, rp, ap] = await Promise.all([
       fetch('/adversarial/signals'),
       fetch('/adversarial/judge-drift'),
       fetch('/adversarial/replay'),
+      fetch('/adversarial/auto-promotions'),
     ]);
     if (sr.ok) renderSignals(await sr.json());
     if (dr.ok) renderJudgeDrift(await dr.json());
     if (rp.ok) renderReplay(await rp.json());
+    if (ap.ok) renderAutoPromote(await ap.json());
   } catch { /* swallow — next tick retries */ }
 }
 

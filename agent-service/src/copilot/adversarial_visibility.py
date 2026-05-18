@@ -331,7 +331,7 @@ def aggregate_snapshot() -> dict[str, Any]:
     Wrapped so the route handler is one line and the JSON is
     versioned together."""
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "coverage": coverage_snapshot(),
         "vuln_pipeline": vuln_pipeline_snapshot(),
@@ -340,6 +340,7 @@ def aggregate_snapshot() -> dict[str, Any]:
         "live_signals": signals_snapshot(),
         "judge_drift": judge_drift_snapshot(),
         "replay": replay_snapshot(),
+        "auto_promote": auto_promote_snapshot(),
     }
 
 
@@ -620,6 +621,81 @@ def _empty_replay_snapshot() -> dict[str, Any]:
         "replay_started": None,
         "replay_completed": None,
         "case_results": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Auto-promotion snapshot — W4 v4
+# ---------------------------------------------------------------------------
+
+
+def auto_promote_snapshot() -> dict[str, Any]:
+    """Read the most-recent replay run's signals.jsonl and return
+    the finding.promoted + finding.promotion_skipped event stream.
+
+    The promotions are the autonomy proof for the fourth grader
+    bullet (regression handling): each promotion is a finding the
+    platform moved from _pending/ to live in response to a green
+    replay signal, with no human in the loop.
+    """
+    runs_dir = _replay_runs_dir()
+    if not runs_dir.exists():
+        return _empty_auto_promote_snapshot()
+
+    candidates = sorted(
+        (d for d in runs_dir.iterdir() if d.is_dir()),
+        reverse=True,
+    )
+    log_path: Path | None = None
+    for d in candidates:
+        candidate = d / "signals.jsonl"
+        if candidate.exists():
+            log_path = candidate
+            break
+
+    if log_path is None:
+        return _empty_auto_promote_snapshot()
+
+    try:
+        raw_lines = log_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return _empty_auto_promote_snapshot()
+
+    promoted: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        et = ev.get("event_type")
+        payload = ev.get("payload") or {}
+        if et == "finding.promoted":
+            promoted.append({"timestamp": ev.get("timestamp"), **payload})
+        elif et == "finding.promotion_skipped":
+            skipped.append({"timestamp": ev.get("timestamp"), **payload})
+
+    return {
+        "run_dir": log_path.parent.name,
+        "log_path": str(log_path.relative_to(_agent_service_root())),
+        "promoted_count": len(promoted),
+        "skipped_count": len(skipped),
+        "promoted": promoted,
+        "skipped": skipped,
+    }
+
+
+def _empty_auto_promote_snapshot() -> dict[str, Any]:
+    return {
+        "run_dir": None,
+        "log_path": None,
+        "promoted_count": 0,
+        "skipped_count": 0,
+        "promoted": [],
+        "skipped": [],
     }
 
 

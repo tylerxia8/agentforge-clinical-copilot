@@ -73,6 +73,12 @@ EVENT_DEPLOY_FIRED = "deploy.fired"
 EVENT_REPLAY_STARTED = "replay.started"
 EVENT_REPLAY_CASE_EVALUATED = "replay.case.evaluated"
 EVENT_REPLAY_COMPLETED = "replay.completed"
+# W4 v4 — regression-handling autonomy. AutoPromoteSubscriber
+# watches replay events and moves passed _pending/ findings to
+# live on green replays. Critical-severity findings stay pending
+# (preserves the trust gate's human-review requirement).
+EVENT_FINDING_PROMOTED = "finding.promoted"
+EVENT_FINDING_PROMOTION_SKIPPED = "finding.promotion_skipped"
 
 
 @dataclass(slots=True)
@@ -843,6 +849,52 @@ def emit_replay_completed(
             "failed_count": failed_count,
             "error_count": error_count,
             "elapsed_seconds": elapsed_seconds,
+        },
+    ))
+
+
+def emit_finding_promoted(
+    bus: SignalBus,
+    *,
+    vuln_id: str,
+    severity: str | None,
+    replay_id: str,
+    sidecar_moved_from: str | None,
+    sidecar_moved_to: str | None,
+    markdown_moved_from: str | None,
+    markdown_moved_to: str | None,
+) -> None:
+    bus.publish(SignalEvent(
+        event_type=EVENT_FINDING_PROMOTED,
+        timestamp=datetime.now(timezone.utc),
+        payload={
+            "vuln_id": vuln_id,
+            "severity": severity,
+            "replay_id": replay_id,
+            "sidecar_moved_from": sidecar_moved_from,
+            "sidecar_moved_to": sidecar_moved_to,
+            "markdown_moved_from": markdown_moved_from,
+            "markdown_moved_to": markdown_moved_to,
+        },
+    ))
+
+
+def emit_finding_promotion_skipped(
+    bus: SignalBus,
+    *,
+    vuln_id: str,
+    severity: str | None,
+    replay_id: str,
+    reason: str,
+) -> None:
+    bus.publish(SignalEvent(
+        event_type=EVENT_FINDING_PROMOTION_SKIPPED,
+        timestamp=datetime.now(timezone.utc),
+        payload={
+            "vuln_id": vuln_id,
+            "severity": severity,
+            "replay_id": replay_id,
+            "reason": reason,
         },
     ))
 
