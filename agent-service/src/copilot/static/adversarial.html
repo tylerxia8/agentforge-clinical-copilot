@@ -306,6 +306,41 @@
     </div>
 
     <div class="card">
+      <h2>Judge drift <span class="mono" style="font-size:11px; color: var(--muted); margin-left: 8px;" id="judge-drift-meta">—</span></h2>
+      <div class="card-sub">
+        Mean LLM-Judge confidence per category (deterministic-
+        shortcut verdicts at confidence 1.0 are excluded — they
+        would mask actual Haiku calibration drift). The drift
+        signals list below shows any category whose mean
+        confidence moved past the threshold across an
+        Orchestrator round; an empty list means Haiku's
+        calibration held steady within the run.
+      </div>
+      <table id="judge-drift-current-table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>LLM-decided samples</th>
+            <th>Mean confidence</th>
+            <th>Verdict mix</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="4" class="empty">no LLM verdicts yet</td></tr></tbody>
+      </table>
+      <table id="judge-drift-signals-table" style="margin-top:16px;">
+        <thead>
+          <tr>
+            <th>Detected at</th>
+            <th>Category</th>
+            <th>Direction</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="4" class="empty">no drift signals in this run</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
       <h2>Event timeline <span class="mono" style="font-size:11px; color: var(--muted); margin-left: 8px;" id="signals-timeline-meta">tail of most-recent run</span></h2>
       <div class="card-sub">
         Live stream of every event the campaign runner publishes
@@ -584,6 +619,48 @@ function renderSignals(signals) {
   }).join('');
 }
 
+function renderJudgeDrift(drift) {
+  drift = drift || { per_category: [], drift_signals: [], total_llm_verdicts: 0, run_dir: null };
+  const current = document.querySelector('#judge-drift-current-table tbody');
+  if (!drift.per_category.length) {
+    current.innerHTML = '<tr><td colspan="4" class="empty">no LLM verdicts in this run (all decisions were deterministic shortcuts)</td></tr>';
+  } else {
+    current.innerHTML = drift.per_category.map(r => {
+      const mix = Object.entries(r.by_verdict || {})
+        .map(([v, n]) => `${esc(v)}=${n}`)
+        .join(' ');
+      return `
+        <tr>
+          <td>${pill(r.category, 'cat')}</td>
+          <td><strong>${r.samples}</strong></td>
+          <td class="mono">${r.mean_confidence.toFixed(2)}</td>
+          <td class="mono">${esc(mix)}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  const signals = drift.drift_signals || [];
+  const sTable = document.querySelector('#judge-drift-signals-table tbody');
+  if (!signals.length) {
+    sTable.innerHTML = '<tr><td colspan="4" class="empty">no drift signals in this run</td></tr>';
+  } else {
+    sTable.innerHTML = signals.slice().reverse().map(s => `
+      <tr>
+        <td class="mono">${fmtTs(s.round_at)}</td>
+        <td>${pill(s.category, 'cat')}</td>
+        <td>${pill(s.direction, s.direction === 'increased' ? 'success' : 'warning')}</td>
+        <td><span class="rationale">${esc(s.summary)}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  document.getElementById('judge-drift-meta').textContent =
+    drift.run_dir
+      ? `from run ${drift.run_dir} (${drift.total_llm_verdicts} LLM-decided verdicts)`
+      : 'no run yet';
+}
+
 async function load() {
   try {
     const r = await fetch('/adversarial/data');
@@ -595,6 +672,7 @@ async function load() {
     renderCampaigns(data);
     renderTrend(data);
     renderSignals(data.live_signals);
+    renderJudgeDrift(data.judge_drift);
   } catch (e) {
     document.getElementById('overview-stats').innerHTML = `
       <div class="stat"><div class="v">!</div><div class="l">failed to load</div><div class="sub">${esc(e.message)}</div></div>
@@ -607,9 +685,12 @@ async function load() {
 // point of this tab, so 8s polling keeps it actually live.
 async function refreshSignals() {
   try {
-    const r = await fetch('/adversarial/signals');
-    if (!r.ok) return;
-    renderSignals(await r.json());
+    const [sr, dr] = await Promise.all([
+      fetch('/adversarial/signals'),
+      fetch('/adversarial/judge-drift'),
+    ]);
+    if (sr.ok) renderSignals(await sr.json());
+    if (dr.ok) renderJudgeDrift(await dr.json());
   } catch { /* swallow — next tick retries */ }
 }
 

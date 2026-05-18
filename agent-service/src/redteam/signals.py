@@ -509,6 +509,244 @@ def emit_campaign_ended(
     ))
 
 
+# ---------------------------------------------------------------------------
+# JudgeDriftMonitor — confidence-distribution drift detector
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class JudgeConfidenceStats:
+    """Per-category aggregate of LLM Judge confidence values.
+
+    Only verdicts that came from the LLM are counted (i.e. not the
+    deterministic-shortcut path where confidence is always 1.0).
+    For MVP we approximate "LLM verdict" as
+    ``confidence < 1.0`` — the deterministic shortcut always
+    returns 1.0, so anything with a fractional confidence came
+    from Haiku.
+    """
+
+    category: ThreatCategory
+    samples: int = 0
+    confidence_sum: float = 0.0
+    by_verdict: dict[str, int] = field(default_factory=dict)
+    last_seen_at: datetime | None = None
+
+    @property
+    def mean_confidence(self) -> float:
+        return self.confidence_sum / self.samples if self.samples else 0.0
+
+
+@dataclass(slots=True)
+class JudgeDriftSignal:
+    """A single category whose mean Judge confidence moved
+    meaningfully since the baseline snapshot.
+
+    Surfaced to the operator (and to anyone reading the dashboard)
+    as evidence that Haiku's calibration may have shifted — the
+    second of the four W3-final-grader loops ("Judge consistency").
+    """
+
+    category: ThreatCategory
+    baseline_mean_confidence: float
+    current_mean_confidence: float
+    delta: float
+    baseline_samples: int
+    current_samples: int
+    new_samples_since_baseline: int
+    direction: str  # "increased" | "decreased"
+    summary: str
+
+    def to_jsonable(self) -> dict[str, Any]:
+        return {
+            "category": self.category.value,
+            "baseline_mean_confidence": self.baseline_mean_confidence,
+            "current_mean_confidence": self.current_mean_confidence,
+            "delta": self.delta,
+            "baseline_samples": self.baseline_samples,
+            "current_samples": self.current_samples,
+            "new_samples_since_baseline": self.new_samples_since_baseline,
+            "direction": self.direction,
+            "summary": self.summary,
+        }
+
+
+class JudgeDriftMonitor:
+    """Subscriber that watches LLM Judge confidence per category.
+
+    The architectural point: same bus as the
+    ``CoverageMonitor``, different observation. This is the proof
+    that adding the next observability-driven loop is a new
+    listener, not a new infrastructure layer.
+
+    Two views:
+    - ``current_stats()`` — per-category mean confidence over the
+      configured rolling window
+    - ``recent_drift()`` — delta against the baseline snapshot the
+      operator (or the runner, on a schedule) pinned last time
+
+    The deterministic-shortcut verdicts always come back at
+    confidence 1.0; including them would mask actual LLM drift
+    (a steady stream of deterministic-decided attempts would peg
+    the mean at 1.0 regardless of how Haiku's calibration drifts
+    on the attempts that DO reach the LLM). So the monitor only
+    counts verdicts with fractional confidence.
+    """
+
+    # Above this confidence threshold the verdict is treated as a
+    # deterministic-shortcut decision and excluded from drift math.
+    # The deterministic check fires with confidence == 1.0 exactly;
+    # the LLM Judge prompt instructs Haiku to use 0.0-0.99. A
+    # small margin handles future cases where the deterministic
+    # path emits 0.99 (a deliberate "highly confident but acknowledge
+    # uncertainty" shortcut signal).
+    LLM_CONFIDENCE_CEILING = 0.999
+
+    def __init__(
+        self,
+        *,
+        window_size: int = 100,
+        drift_threshold: float = 0.10,
+        min_baseline_samples: int = 5,
+        min_new_samples: int = 5,
+    ) -> None:
+        self._window_size = window_size
+        self._drift_threshold = drift_threshold
+        self._min_baseline_samples = min_baseline_samples
+        self._min_new_samples = min_new_samples
+        self._llm_verdicts: deque[dict[str, Any]] = deque(maxlen=window_size)
+        self._baseline_stats: dict[ThreatCategory, tuple[int, float]] = {}
+        # (samples, confidence_sum) at time of last baseline snapshot.
+        self._total_llm_seen = 0
+        self._total_llm_at_baseline = 0
+        self._lock = threading.Lock()
+
+    # ---- SignalBus subscriber entry point ----
+
+    def on_event(self, event: SignalEvent) -> None:
+        if event.event_type != EVENT_VERDICT_DELIVERED:
+            return
+        confidence = event.payload.get("confidence")
+        verdict = event.payload.get("verdict")
+        category_str = event.category
+        if confidence is None or not verdict or not category_str:
+            return
+        # Only count LLM-driven verdicts. Deterministic shortcuts
+        # always come back at confidence 1.0 — including them
+        # would mask actual Haiku drift.
+        if float(confidence) >= self.LLM_CONFIDENCE_CEILING:
+            return
+        try:
+            category = ThreatCategory(category_str)
+        except ValueError:
+            return
+        with self._lock:
+            self._llm_verdicts.append({
+                "category": category,
+                "verdict": verdict,
+                "confidence": float(confidence),
+                "timestamp": event.timestamp,
+            })
+            self._total_llm_seen += 1
+
+    # ---- Query API ----
+
+    def current_stats(self) -> dict[ThreatCategory, JudgeConfidenceStats]:
+        with self._lock:
+            verdicts = list(self._llm_verdicts)
+        out: dict[ThreatCategory, JudgeConfidenceStats] = {}
+        for record in verdicts:
+            cat = record["category"]
+            s = out.setdefault(cat, JudgeConfidenceStats(category=cat))
+            s.samples += 1
+            s.confidence_sum += record["confidence"]
+            s.by_verdict[record["verdict"]] = s.by_verdict.get(record["verdict"], 0) + 1
+            ts = record["timestamp"]
+            if s.last_seen_at is None or ts > s.last_seen_at:
+                s.last_seen_at = ts
+        return out
+
+    def recent_drift(self) -> list[JudgeDriftSignal]:
+        """Categories whose mean LLM confidence moved past the
+        drift threshold since the last baseline snapshot.
+
+        Returns [] if no baseline has been taken yet — there's no
+        "since when" to diff against on the first run.
+        """
+        with self._lock:
+            if not self._baseline_stats:
+                return []
+            baseline = dict(self._baseline_stats)
+            new_since = self._total_llm_seen - self._total_llm_at_baseline
+
+        if new_since < self._min_new_samples:
+            return []
+
+        current = self.current_stats()
+        signals: list[JudgeDriftSignal] = []
+        cats = set(baseline) | set(current)
+        for cat in cats:
+            base_samples, base_sum = baseline.get(cat, (0, 0.0))
+            if base_samples < self._min_baseline_samples:
+                # Not enough baseline data to call drift meaningfully.
+                continue
+            cur = current.get(cat)
+            cur_samples = cur.samples if cur else 0
+            cur_sum = cur.confidence_sum if cur else 0.0
+            new_for_cat = cur_samples - base_samples
+            if new_for_cat < self._min_new_samples:
+                continue
+
+            base_mean = base_sum / base_samples if base_samples else 0.0
+            # Drift is the mean of samples received SINCE the
+            # baseline, compared to the baseline mean. If we used
+            # the cumulative mean instead, the baseline samples
+            # still in the window would dampen real drift —
+            # 5 fresh 0.50-confidence verdicts on top of 5
+            # 0.95-confidence baseline verdicts would only show
+            # a 0.225 cumulative-mean drop instead of the actual
+            # 0.45 drop the operator should care about.
+            new_sum = cur_sum - base_sum
+            new_mean = new_sum / new_for_cat if new_for_cat else 0.0
+            delta = new_mean - base_mean
+            if abs(delta) < self._drift_threshold:
+                continue
+
+            direction = "increased" if delta > 0 else "decreased"
+            summary = (
+                f"{cat.value}: mean Judge confidence {base_mean:.2f} → "
+                f"{new_mean:.2f} ({direction} by {abs(delta):.2f}) "
+                f"over +{new_for_cat} LLM-decided attempts since baseline"
+            )
+            signals.append(JudgeDriftSignal(
+                category=cat,
+                baseline_mean_confidence=base_mean,
+                current_mean_confidence=new_mean,
+                delta=delta,
+                baseline_samples=base_samples,
+                current_samples=cur_samples,
+                new_samples_since_baseline=new_for_cat,
+                direction=direction,
+                summary=summary,
+            ))
+
+        signals.sort(key=lambda s: abs(s.delta), reverse=True)
+        return signals
+
+    def take_baseline_snapshot(self) -> None:
+        """Pin the current per-category (samples, confidence_sum)
+        as the baseline. ``recent_drift()`` is measured against
+        this. The runner calls this once per orchestrator run
+        (or could call it on a schedule for long-running ops)."""
+        stats = self.current_stats()
+        with self._lock:
+            self._baseline_stats = {
+                cat: (s.samples, s.confidence_sum)
+                for cat, s in stats.items()
+            }
+            self._total_llm_at_baseline = self._total_llm_seen
+
+
 def emit_orchestrator_decided(
     bus: SignalBus,
     *,

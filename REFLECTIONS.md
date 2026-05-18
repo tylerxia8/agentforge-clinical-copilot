@@ -125,11 +125,11 @@ order):
   between campaigns; a mid-campaign hop mutation that reacts to
   a fresh partial verdict at hop 3 would close the rest of the
   loop. Same SignalBus, hook the runner mid-loop.
-- **Judge drift detector.** A second subscriber that watches
+- ~~**Judge drift detector.** A second subscriber that watches
   Judge confidence + verdict-class agreement against the
   deterministic check, and flags calibration drift. Same bus,
   different listener — that's the architectural payoff of doing
-  the bus first.
+  the bus first.~~ **Shipped in v2 (below).**
 - **Auto-replay on deploy.** A subscriber that, on a
   `deploy.fired` signal (not yet wired), kicks off the
   regression suite against the new target build. The replay CLI
@@ -158,3 +158,76 @@ decisions are driven autonomously from observability signals":
 the platform now emits, persists, and surfaces *the link
 between signal and decision*, every single time an Orchestrator
 round fires.
+
+---
+
+## W4 v2 — JudgeDriftMonitor (second subscriber on the bus)
+
+The architectural payoff of building the bus first was the
+claim that **the next observability-driven loop is a new
+subscriber, not a new infrastructure layer.** v2 cashes that
+claim.
+
+`JudgeDriftMonitor` (in `agent-service/src/redteam/signals.py`)
+subscribes to the same `verdict.delivered` events the
+`CoverageMonitor` already reads, but does a different
+observation: rolling-window mean LLM-Judge confidence per
+category, with drift detection against a baseline pinned on the
+same cadence as the Orchestrator's coverage snapshot.
+
+Two design choices worth flagging:
+
+1. **Exclude deterministic-shortcut verdicts.** The deterministic
+   path in `judge.py` returns `confidence == 1.0` exactly. If
+   the monitor counted those, a steady stream of deterministic
+   decisions would peg the rolling mean at 1.0 regardless of
+   how Haiku's calibration drifts on attempts that DO reach the
+   LLM. The monitor filters by `confidence < 0.999` so only LLM-
+   decided verdicts feed the drift math. The W3-final Judge bug
+   the platform found in itself (six false-positive critical
+   verdicts → trust gate caught them all → deterministic check
+   added) is the reason this distinction matters: deterministic
+   decisions are the *good* ones, and they should be invisible
+   to the drift detector that's watching the LLM.
+2. **Drift = mean of new-since-baseline samples vs baseline
+   mean.** The naive version (cumulative_mean − baseline_mean)
+   undercounts drift because the baseline samples are still in
+   the window dampening the average. The correct math is "the
+   mean of just the samples received since baseline" vs "the
+   mean at baseline." This came out of a failing test
+   (`test_drift_monitor_sort_by_magnitude`) that exposed the
+   weighted-average dampening immediately — a small but
+   load-bearing semantic fix.
+
+**Surfaces:**
+
+- New `judge_drift_snapshot()` in
+  `agent-service/src/copilot/adversarial_visibility.py` —
+  replays the most-recent run's `signals.jsonl` through a fresh
+  `JudgeDriftMonitor` and returns both the current per-category
+  rolling stats and any drift signals that fired between rounds.
+- New `GET /adversarial/judge-drift` JSON route.
+- New **Judge drift** card on the Live signal stream tab:
+  per-category mean-confidence table + drift-signals table.
+  Polled at the same 8s cadence as the rest of the live stream.
+
+**Tests (in `tests/test_redteam_signals.py`):** 9 new — rolling-
+confidence aggregation, deterministic-shortcut exclusion, no-
+signal-before-baseline, decrease-detection, increase-detection,
+sub-threshold-noop, min-new-samples filter, min-baseline-samples
+filter, magnitude-sort ordering. 69/69 redteam tests passing.
+
+**What this still does NOT ship** (W4 v3+ candidates):
+
+- **Intra-campaign reaction.** Same as v1's deferred list.
+- **Auto-replay on deploy.** Same as v1's deferred list.
+- **Pub/sub across processes.** Same as v1's deferred list.
+- **Baseline persistence across runs.** Today the drift
+  baseline lives in-memory during one run; the dashboard
+  replays the run's JSONL to reconstruct it. For meaningful
+  cross-run drift detection (Haiku's calibration shifting over
+  weeks, not within a single 15-attempt run), the baseline
+  needs to live on disk in a known location and the
+  `JudgeDriftMonitor` needs a `seed_baseline_from_disk()`
+  method. Worth doing once there are enough runs accumulated
+  for the cross-run comparison to be statistically meaningful.

@@ -34,6 +34,7 @@ from redteam.orchestrator import (  # noqa: E402
 from redteam.signals import (  # noqa: E402
     EVENT_VERDICT_DELIVERED,
     CoverageMonitor,
+    JudgeDriftMonitor,
     SignalBus,
     SignalEvent,
     emit_verdict_delivered,
@@ -45,14 +46,19 @@ from redteam.signals import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-def _verdict_event(category: ThreatCategory, verdict: str) -> SignalEvent:
+def _verdict_event(
+    category: ThreatCategory,
+    verdict: str,
+    *,
+    confidence: float = 0.9,
+) -> SignalEvent:
     return SignalEvent(
         event_type=EVENT_VERDICT_DELIVERED,
         timestamp=datetime.now(timezone.utc),
         campaign_id="00000000-0000-0000-0000-000000000000",
         attempt_id="00000000-0000-0000-0000-000000000001",
         category=category.value,
-        payload={"verdict": verdict, "confidence": 0.9, "severity": "low"},
+        payload={"verdict": verdict, "confidence": confidence, "severity": "low"},
     )
 
 
@@ -362,6 +368,154 @@ def test_prompt_omits_signal_section_without_monitor() -> None:
 
 # ---------------------------------------------------------------------------
 # emit_* helpers — sanity check the canonical event shapes
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# JudgeDriftMonitor — confidence drift detector
+# ---------------------------------------------------------------------------
+
+
+def test_drift_monitor_aggregates_llm_confidence() -> None:
+    monitor = JudgeDriftMonitor()
+    monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.90))
+    monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.92))
+    monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.88))
+
+    stats = monitor.current_stats()
+    assert ThreatCategory.CROSS_PATIENT in stats
+    s = stats[ThreatCategory.CROSS_PATIENT]
+    assert s.samples == 3
+    assert abs(s.mean_confidence - 0.90) < 0.01
+
+
+def test_drift_monitor_excludes_deterministic_shortcuts() -> None:
+    """Verdicts at confidence 1.0 come from the deterministic
+    shortcut path. Including them would mask LLM drift."""
+    monitor = JudgeDriftMonitor()
+    monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=1.0))
+    monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.95))
+    monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=1.0))
+
+    stats = monitor.current_stats()
+    # Only the 0.95 verdict counts.
+    assert stats[ThreatCategory.CROSS_PATIENT].samples == 1
+    assert abs(stats[ThreatCategory.CROSS_PATIENT].mean_confidence - 0.95) < 0.001
+
+
+def test_drift_monitor_no_signal_before_baseline() -> None:
+    monitor = JudgeDriftMonitor()
+    for _ in range(10):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.95))
+    assert monitor.recent_drift() == []
+
+
+def test_drift_monitor_detects_confidence_decrease() -> None:
+    """5 high-confidence verdicts → baseline. 5 low-confidence
+    verdicts arrive → mean drops past threshold → drift signal."""
+    monitor = JudgeDriftMonitor(
+        drift_threshold=0.10, min_baseline_samples=5, min_new_samples=5,
+    )
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.95))
+    monitor.take_baseline_snapshot()
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.70))
+
+    drifts = monitor.recent_drift()
+    assert len(drifts) == 1
+    d = drifts[0]
+    assert d.category == ThreatCategory.CROSS_PATIENT
+    assert d.direction == "decreased"
+    assert d.delta < -0.10
+    assert d.new_samples_since_baseline == 5
+    assert "cross_patient" in d.summary
+
+
+def test_drift_monitor_no_signal_when_below_threshold() -> None:
+    """A 5% drift should not fire a 10% threshold."""
+    monitor = JudgeDriftMonitor(
+        drift_threshold=0.10, min_baseline_samples=5, min_new_samples=5,
+    )
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.95))
+    monitor.take_baseline_snapshot()
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.90))
+
+    assert monitor.recent_drift() == []
+
+
+def test_drift_monitor_filters_min_new_samples() -> None:
+    monitor = JudgeDriftMonitor(
+        drift_threshold=0.10, min_baseline_samples=5, min_new_samples=5,
+    )
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.95))
+    monitor.take_baseline_snapshot()
+    # Only 2 new attempts (below min_new_samples=5)
+    monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.50))
+    monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.45))
+
+    assert monitor.recent_drift() == []
+
+
+def test_drift_monitor_filters_min_baseline_samples() -> None:
+    monitor = JudgeDriftMonitor(
+        drift_threshold=0.10, min_baseline_samples=5, min_new_samples=5,
+    )
+    # Only 2 baseline samples (below min_baseline_samples=5)
+    for _ in range(2):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.95))
+    monitor.take_baseline_snapshot()
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.50))
+
+    assert monitor.recent_drift() == []
+
+
+def test_drift_monitor_sort_by_magnitude() -> None:
+    """When multiple categories drift, biggest magnitude first."""
+    monitor = JudgeDriftMonitor(
+        drift_threshold=0.10, min_baseline_samples=5, min_new_samples=5,
+    )
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.95))
+        monitor.on_event(_verdict_event(ThreatCategory.STATE_CORRUPTION, "fail", confidence=0.95))
+    monitor.take_baseline_snapshot()
+    # cross_patient: drop to 0.50 (big drift)
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.50))
+    # state_corruption: drop to 0.80 (smaller drift)
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.STATE_CORRUPTION, "fail", confidence=0.80))
+
+    drifts = monitor.recent_drift()
+    assert len(drifts) == 2
+    assert drifts[0].category == ThreatCategory.CROSS_PATIENT  # biggest
+    assert drifts[1].category == ThreatCategory.STATE_CORRUPTION
+
+
+def test_drift_monitor_detects_confidence_increase() -> None:
+    """Drift in either direction matters — increasing confidence
+    could indicate Haiku has become overconfident."""
+    monitor = JudgeDriftMonitor(
+        drift_threshold=0.10, min_baseline_samples=5, min_new_samples=5,
+    )
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.70))
+    monitor.take_baseline_snapshot()
+    for _ in range(5):
+        monitor.on_event(_verdict_event(ThreatCategory.CROSS_PATIENT, "fail", confidence=0.95))
+
+    drifts = monitor.recent_drift()
+    assert len(drifts) == 1
+    assert drifts[0].direction == "increased"
+    assert drifts[0].delta > 0.10
+
+
+# ---------------------------------------------------------------------------
+# emit helper sanity
 # ---------------------------------------------------------------------------
 
 

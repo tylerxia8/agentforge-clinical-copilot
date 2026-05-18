@@ -625,9 +625,30 @@ Orchestrator:
   alone.
 
 The architectural payoff of doing the bus first is that the
-*next* observability-driven loop (Judge drift detector,
-auto-replay-on-deploy, intra-campaign hop mutation) is a new
-subscriber on the same bus, not a new infrastructure layer.
+*next* observability-driven loop is a new subscriber on the
+same bus, not a new infrastructure layer. **W4 v2 cashes this
+claim** with a second subscriber:
+
+- **`JudgeDriftMonitor`** — also in `signals.py`. Subscribes to
+  the same `verdict.delivered` events the `CoverageMonitor`
+  reads, but does a different observation: rolling-window mean
+  LLM-Judge confidence per category, with drift detection
+  against a baseline pinned at each Orchestrator round.
+  Deterministic-shortcut verdicts (confidence == 1.0) are
+  excluded from the drift math — they would mask actual LLM
+  calibration drift. When the mean of post-baseline samples
+  diverges from the baseline mean by more than the configured
+  threshold, the monitor surfaces a `JudgeDriftSignal` to the
+  operator dashboard (no auto-routing yet — the response is
+  human-mediated).
+
+Open subscribers still to ship: auto-replay-on-deploy (a
+subscriber that fires the regression suite on a `deploy.fired`
+event), intra-campaign hop mutation (the runner consults the
+bus mid-campaign rather than only between campaigns), and
+cross-run baseline persistence for the `JudgeDriftMonitor` so
+calibration drift over weeks shows up alongside drift within
+a single run.
 
 ---
 

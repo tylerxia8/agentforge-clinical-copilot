@@ -495,6 +495,23 @@ async def adversarial_signals(max_events: int = 50) -> dict[str, Any]:
     return signals_snapshot(max_events=max_events)
 
 
+@app.get("/adversarial/judge-drift")
+async def adversarial_judge_drift() -> dict[str, Any]:
+    """JSON view of LLM-Judge confidence drift per category.
+
+    The Judge consistency loop is the second W3-final-grader bullet
+    being converted from structured-sequential to observability-
+    driven. The JudgeDriftMonitor watches LLM verdict confidence
+    per category and surfaces drift signals when the rolling mean
+    moves past a threshold against the baseline pinned at the
+    previous Orchestrator decision. Per-attempt deterministic-
+    shortcut verdicts are excluded — they always come back at
+    confidence 1.0 and would mask actual LLM calibration drift.
+    """
+    from copilot.adversarial_visibility import judge_drift_snapshot
+    return judge_drift_snapshot()
+
+
 @app.get("/adversarial/attempts/{attempt_id}", response_class=HTMLResponse, response_model=None)
 async def adversarial_attempt_page(attempt_id: str) -> FileResponse | HTMLResponse:
     """Per-attempt deep-link page. Renders one Red Team attempt's

@@ -56,6 +56,7 @@ from redteam.orchestrator import Orchestrator, OrchestratorContext
 from redteam.red_team import RedTeamAgent, RedTeamAgentRefused
 from redteam.signals import (
     CoverageMonitor,
+    JudgeDriftMonitor,
     SignalBus,
     emit_attempt_recorded,
     emit_campaign_ended,
@@ -376,13 +377,20 @@ async def _main(argv: list[str]) -> int:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = _runs_root() / timestamp
 
-    # W4 signal bus + live monitor. Per-run signals.jsonl lives next
+    # W4 signal bus + live monitors. Per-run signals.jsonl lives next
     # to the campaign JSONs so the dashboard can scan the most-recent
-    # run dir for the live stream.
+    # run dir for the live stream. The two monitors are independent
+    # subscribers — same bus, different observations:
+    #   - CoverageMonitor watches verdict-distribution shifts and
+    #     feeds them into the Orchestrator's next decision
+    #   - JudgeDriftMonitor watches LLM-Judge confidence drift
+    #     per category and surfaces drift to the operator dashboard
     out_dir.mkdir(parents=True, exist_ok=True)
     signal_bus = SignalBus(persist_path=out_dir / "signals.jsonl")
     live_monitor = CoverageMonitor()
+    drift_monitor = JudgeDriftMonitor()
     signal_bus.subscribe(live_monitor.on_event)
+    signal_bus.subscribe(drift_monitor.on_event)
 
     summaries: list[dict] = []
 
@@ -400,12 +408,17 @@ async def _main(argv: list[str]) -> int:
             print(f"\n##### Orchestrator round {round_idx}/{args.orchestrate} #####")
             coverage = build_coverage_report(_runs_root())
 
-            # Pin the live-monitor baseline BEFORE asking the
+            # Pin both monitors' baselines BEFORE asking the
             # Orchestrator. Subsequent verdicts move the live
-            # snapshot; the next round's recent_shifts() compares
-            # against this baseline.
+            # snapshots; the next round's recent_shifts() and
+            # recent_drift() compare against these baselines.
+            # Same cadence keeps the pattern uniform across
+            # subscribers; the two monitors do different math on
+            # the same event stream.
             shifts_for_this_round = live_monitor.recent_shifts()
+            drift_for_this_round = drift_monitor.recent_drift()
             live_monitor.take_orchestrator_snapshot()
+            drift_monitor.take_baseline_snapshot()
 
             ctx = OrchestratorContext(
                 coverage=coverage,
@@ -423,6 +436,11 @@ async def _main(argv: list[str]) -> int:
                       f"{len(shifts_for_this_round)} category(ies) moved")
                 for s in shifts_for_this_round[:3]:
                     print(f"    - {s.summary}")
+            if drift_for_this_round:
+                print(f"  judge drift since last decision: "
+                      f"{len(drift_for_this_round)} category(ies)")
+                for d in drift_for_this_round[:3]:
+                    print(f"    - {d.summary}")
 
             campaign = await orchestrator.plan_next_campaign(ctx)
             if campaign is None:

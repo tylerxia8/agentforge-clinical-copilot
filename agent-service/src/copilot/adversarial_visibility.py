@@ -331,13 +331,14 @@ def aggregate_snapshot() -> dict[str, Any]:
     Wrapped so the route handler is one line and the JSON is
     versioned together."""
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "coverage": coverage_snapshot(),
         "vuln_pipeline": vuln_pipeline_snapshot(),
         "recent_campaigns": recent_campaigns_snapshot(),
         "time_series": time_series_snapshot(),
         "live_signals": signals_snapshot(),
+        "judge_drift": judge_drift_snapshot(),
     }
 
 
@@ -429,6 +430,105 @@ def _empty_signals_snapshot() -> dict[str, Any]:
         "event_counts": {},
         "orchestrator_decisions": [],
         "recent_events": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Judge drift — replays the most recent run's verdict events through a
+# fresh JudgeDriftMonitor to produce the same view the runner sees live
+# ---------------------------------------------------------------------------
+
+
+def judge_drift_snapshot() -> dict[str, Any]:
+    """Replay the most-recent run's signals.jsonl through a fresh
+    JudgeDriftMonitor and return both the current rolling-window
+    confidence stats per category and any drift signals that
+    would have fired across the run.
+
+    The replay strategy: walk events in order, take a baseline
+    snapshot at each ``orchestrator.decided`` event (mirroring the
+    runner's per-round cadence), and collect any drift signals
+    surfaced between rounds. The final ``current_stats`` is the
+    full-run view.
+
+    This is the dashboard's window into the Judge consistency
+    loop — the second of the four W3-final-grader loops that W4
+    is converting from structured-sequential to observability-
+    driven.
+    """
+    from redteam.signals import (  # local import to keep visibility module light at startup
+        EVENT_ORCHESTRATOR_DECIDED,
+        JudgeDriftMonitor,
+        SignalBus,
+    )
+
+    runs_dir = _redteam_runs_dir()
+    if not runs_dir.exists():
+        return _empty_judge_drift_snapshot()
+
+    candidates = sorted(
+        (d for d in runs_dir.iterdir() if d.is_dir()),
+        reverse=True,
+    )
+    log_path: Path | None = None
+    for d in candidates:
+        candidate = d / "signals.jsonl"
+        if candidate.exists():
+            log_path = candidate
+            break
+
+    if log_path is None:
+        return _empty_judge_drift_snapshot()
+
+    events = SignalBus.replay_from_jsonl(log_path)
+    if not events:
+        return _empty_judge_drift_snapshot()
+
+    monitor = JudgeDriftMonitor()
+    drift_signals_per_round: list[dict[str, Any]] = []
+    for ev in events:
+        monitor.on_event(ev)
+        if ev.event_type == EVENT_ORCHESTRATOR_DECIDED:
+            # The round just decided; surface drift if any, then
+            # pin a new baseline for the *next* round.
+            for d in monitor.recent_drift():
+                drift_signals_per_round.append({
+                    "round_at": ev.timestamp.isoformat(),
+                    **d.to_jsonable(),
+                })
+            monitor.take_baseline_snapshot()
+
+    final_stats = monitor.current_stats()
+    per_category_view = sorted(
+        (
+            {
+                "category": cat.value,
+                "samples": s.samples,
+                "mean_confidence": round(s.mean_confidence, 3),
+                "by_verdict": s.by_verdict,
+                "last_seen_at": s.last_seen_at.isoformat() if s.last_seen_at else None,
+            }
+            for cat, s in final_stats.items()
+        ),
+        key=lambda r: r["category"],
+    )
+
+    return {
+        "run_dir": log_path.parent.name,
+        "log_path": str(log_path.relative_to(_agent_service_root())),
+        "total_llm_verdicts": sum(s.samples for s in final_stats.values()),
+        "per_category": per_category_view,
+        "drift_signals": drift_signals_per_round,
+    }
+
+
+def _empty_judge_drift_snapshot() -> dict[str, Any]:
+    return {
+        "run_dir": None,
+        "log_path": None,
+        "total_llm_verdicts": 0,
+        "per_category": [],
+        "drift_signals": [],
     }
 
 
